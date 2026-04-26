@@ -1,0 +1,182 @@
+[
+  {
+    "species_id": "turdus_migratorius",
+    "common_name": "American Robin",
+    "species_group": "birds",
+    "behavior_class": "alarm_aerial",
+    "call_pattern": "High-pitched thin 'seet' calls, repeated 3-7 times rapidly",
+    "acoustic_features": {"frequency_range": "6000-9000 Hz", "duration_ms": "80-120", "amplitude": "sudden onset, rapid decay"},
+    "behavioral_meaning": "Aerial predator detected — hawk, owl, or large raptor overhead. Maximum urgency freeze response.",
+    "behavioral_response": "Entire flock freezes instantly. Birds seek dense cover. Silence follows.",
+    "translation_template": "FREEZE! There's a hawk directly overhead. Don't move a muscle.",
+    "intensity_modifiers": {
+      "high": "FREEZE! They're RIGHT above us — hawk circling overhead! Nobody move!",
+      "medium": "Careful — I think I spotted a hawk up there. Stay alert and find cover.",
+      "low": "Something moved in the sky. Could be a predator. Watch the sky."
+    },
+    "source": "Morse 1980; Robinson 1990; Cornell Lab of Ornithology",
+    "confidence": "high"
+  },
+  {
+    "species_id": "turdus_migratorius",
+    "common_name": "American Robin",
+    "species_group": "birds",
+    "behavior_class": "alarm_ground",
+    "call_pattern": "Sharp 'peek' or 'tut' calls, loud and repetitive",
+    "acoustic_features": {"frequency_range": "2000-5000 Hz", "duration_ms": "50-100", "amplitude": "loud, sustained"},
+    "behavioral_meaning": "Ground predator detected — cat, snake, or mammalian threat approaching.",
+    "behavioral_response": "Birds mob the predator. Dive-bombing behavior. Loud alarm chorus.",
+    "translation_template": "There's something on the ground — everyone come look! We need to drive it away!",
+    "intensity_modifiers": {
+      "high": "CAT! CAT on the ground! Everyone get over here — we're mobbing it NOW!",
+      "medium": "Something's moving down there. Come check this out — could be a threat.",
+      "low": "I noticed something on the ground. Keeping an eye on it."
+    },
+    "source": "Morse 1980; Templeton et al. 2005",
+    "confidence": "high"
+  },
+  {
+    "species_id": "turdus_migratorius",
+    "common_name": "American Robin",
+    "species_group": "birds",
+    "behavior_class": "territorial_warning",
+    "call_pattern": "Loud, melodious 'cheerily cheer-up cheerio' song from exposed perch",
+    "acoustic_features": {"frequency_range": "2000-6000 Hz", "duration_ms": "2000-4000", "amplitude": "strong, sustained"},
+    "behavioral_meaning": "Male defending breeding territory. Broadcasting ownership and fitness.",
+    "behavioral_response": "Rival males retreat or counter-sing from their own territories.",
+    "translation_template": "This is MY territory. I've been here all season. Listen to how strong I sing — you don't want to challenge me.",
+    "intensity_modifiers": {
+      "high": "This is MY territory and I will FIGHT for it! I've been singing here all season. Back off NOW!",
+      "medium": "I'm singing from my territory. This area is claimed. Please find somewhere else.",
+      "low": "Just singing my morning song. Letting everyone know I'm here."
+    },
+    "source": "Morse 1980; Cornell Lab of Ornithology",
+    "confidence": "high"
+  },
+  {
+    "species_id": "turdus_migratorius",
+    "common_name": "American Robin",
+    "species_group": "birds",
+    "behavior_class": "contact_call",
+    "call_pattern": "Soft 'tuk tuk' or low whistles between flock members",
+    "acoustic_features": {"frequency_range": "1500-3500 Hz", "duration_ms": "100-200", "amplitude": "soft, gentle"},
+    "behavioral_meaning": "Maintaining flock cohesion. 'I'm here, where are you?' social check-in.",
+    "behavioral_response": "Nearby birds respond with similar soft calls. Flock stays loosely together.",
+    "translation_template": "I'm over here — just checking in. Everyone okay? Stay close.",
+    "intensity_modifiers": {
+      "high": "Where IS everyone? I can't see any of you! Please respond!",
+      "medium": "Hey, I'm over here by the bush. Anyone nearby?",
+      "low": "Just saying hi. All good here."
+    },
+    "source": "Cornell Lab of Ornithology; Ficken & Popp 1996",
+    "confidence": "high"
+  },
+  {
+    "species_id": "corvus_brachyrhynchos",
+    "common_name": "American Crow",
+    "species_group": "birds",
+    "behavior_class": "territorial_warning",
+    "call_pattern": "Extended harsh 'caw-caw-caw' series, 5-15 repetitions",
+    "acoustic_features": {"frequency_range": "1000-4000 Hz", "duration_ms": "300-500 per caw", "amplitude": "very loud"},
+    "behavioral_meaning": "Territorial defense. Warning rival crows or other threats to leave the area.",
+    "behavioral_response": "Rival crows retreat or engage in counter-calling contest.",
+    "translation_template": "This is my territory. I've been here for years and I am not leaving. You need to go.",
+    "intensity_modifiers": {
+      "high": "GET OUT! This is MY area! I will bring my entire family to drive you out if you don't leave RIGHT NOW!",
+      "medium": "Hey — this area is taken. I suggest you move along before things get serious.",
+      "low": "Just letting everyone know I'm around. This is my patch."
+    },
+    "source": "Marzluff & Angell 2012; Caffrey 2000",
+    "confidence": "high"
+  },
+  {
+    "species_id": "corvus_brachyrhynchos",
+    "common_name": "American Crow",
+    "species_group": "birds",
+    "behavior_class": "alarm_aerial",
+    "call_pattern": "Rapid, urgent 'caw' bursts with mobbing calls",
+    "acoustic_features": {"frequency_range": "1500-5000 Hz", "duration_ms": "200-400", "amplitude": "very loud, harsh"},
+    "behavioral_meaning": "Predator detected — owl or hawk. Rallying flock for mobbing behavior.",
+    "behavioral_response": "Crows gather from wide area. Aggressive mobbing of predator.",
+    "translation_template": "HAWK! Everyone get over here NOW! We're driving this thing out of our territory!",
+    "intensity_modifiers": {
+      "high": "OWL! I found an OWL! Every crow within earshot — GET HERE NOW! We're mobbing!",
+      "medium": "Predator spotted — looks like a hawk. Calling for backup.",
+      "low": "I see something suspicious up there. Keep your eyes open."
+    },
+    "source": "Marzluff & Angell 2012; Cornell Lab",
+    "confidence": "high"
+  },
+  {
+    "species_id": "corvus_brachyrhynchos",
+    "common_name": "American Crow",
+    "species_group": "birds",
+    "behavior_class": "feeding_call",
+    "call_pattern": "Soft, modulated 'caw' with lower pitch, often repeated 2-3 times",
+    "acoustic_features": {"frequency_range": "800-2500 Hz", "duration_ms": "200-350", "amplitude": "moderate"},
+    "behavioral_meaning": "Food discovery. Alerting family group to food source.",
+    "behavioral_response": "Family members approach. Coordinated feeding begins.",
+    "translation_template": "Found food over here! Come check this out — there's plenty for everyone.",
+    "intensity_modifiers": {
+      "high": "JACKPOT! Huge food source here! Everyone come quick before something else finds it!",
+      "medium": "Hey family — found some food over here. Come on over.",
+      "low": "Picked up a snack. Not much, but it's something."
+    },
+    "source": "Marzluff & Angell 2012",
+    "confidence": "medium"
+  },
+  {
+    "species_id": "parus_major",
+    "common_name": "Great Tit",
+    "species_group": "birds",
+    "behavior_class": "alarm_aerial",
+    "call_pattern": "Thin, high-frequency 'seet' alarm call",
+    "acoustic_features": {"frequency_range": "7000-9000 Hz", "duration_ms": "50-80", "amplitude": "quiet, ventriloquial"},
+    "behavioral_meaning": "Aerial predator warning. Call frequency makes it hard for predator to locate caller.",
+    "behavioral_response": "All nearby birds freeze. No mobbing — pure freeze response.",
+    "translation_template": "Don't move! Predator above! Stay perfectly still!",
+    "intensity_modifiers": {
+      "high": "FREEZE RIGHT NOW! Sparrowhawk directly overhead! Nobody breathe!",
+      "medium": "Something flying above. Stay still until I give the all clear.",
+      "low": "Might have seen something overhead. Stay cautious."
+    },
+    "source": "Templeton et al. 2005; Morse 1980",
+    "confidence": "high"
+  },
+  {
+    "species_id": "mimus_polyglottos",
+    "common_name": "Northern Mockingbird",
+    "species_group": "birds",
+    "behavior_class": "territorial_warning",
+    "call_pattern": "Complex song with repeated phrases, 3-6 repetitions each, from high perch",
+    "acoustic_features": {"frequency_range": "1500-8000 Hz", "duration_ms": "continuous singing", "amplitude": "very loud"},
+    "behavioral_meaning": "Aggressive territory defense. Repertoire size signals fitness and experience.",
+    "behavioral_response": "Rival males retreat. Females assess male quality by song complexity.",
+    "translation_template": "Listen to how many songs I know! This territory is mine. I've lived here long enough to learn ALL these songs.",
+    "intensity_modifiers": {
+      "high": "I know MORE songs than you EVER will! This is MY territory and I'll sing ALL NIGHT to prove it!",
+      "medium": "Here's another song from my repertoire. I know dozens. This area is well-defended.",
+      "low": "Just practicing my songs. Keeping sharp."
+    },
+    "source": "Derrickson & Breitwisch 1992; Cornell Lab",
+    "confidence": "high"
+  },
+  {
+    "species_id": "melospiza_melodia",
+    "common_name": "Song Sparrow",
+    "species_group": "birds",
+    "behavior_class": "mating_call",
+    "call_pattern": "Complex melodic song starting with 2-3 clear notes, then a trill",
+    "acoustic_features": {"frequency_range": "2000-7000 Hz", "duration_ms": "2000-3000", "amplitude": "moderate to loud"},
+    "behavioral_meaning": "Male advertising for mates. Song complexity indicates genetic fitness.",
+    "behavioral_response": "Females approach to assess. Rival males counter-sing.",
+    "translation_template": "I am here. I am strong. Listen to how beautifully I can sing. Come find me.",
+    "intensity_modifiers": {
+      "high": "I am the BEST singer in this area! Ladies, come hear what I can do! I'll sing all day!",
+      "medium": "Singing my best song. Looking for someone special to share this territory with.",
+      "low": "Practicing my tune. Just warming up."
+    },
+    "source": "Nowicki et al. 1998; Cornell Lab",
+    "confidence": "high"
+  }
+]

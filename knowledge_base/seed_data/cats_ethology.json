@@ -1,0 +1,62 @@
+[
+  {
+    "species_id": "felis_catus", "common_name": "Domestic Cat", "species_group": "cats",
+    "behavior_class": "social_bonding",
+    "call_pattern": "Slow, rhythmic purring at 25-50 Hz",
+    "acoustic_features": {"frequency_range": "25-50 Hz", "duration_ms": "continuous", "amplitude": "soft, vibratory"},
+    "behavioral_meaning": "Contentment and social bonding. Also used for self-soothing when stressed or injured.",
+    "behavioral_response": "Human/cat companion remains close. Mutual relaxation.",
+    "translation_template": "I feel completely safe with you right now. This is exactly where I want to be.",
+    "intensity_modifiers": {
+      "high": "This is PERFECT. Don't move. Don't change anything. I am in absolute bliss right now.",
+      "medium": "I'm comfortable here with you. Keep doing what you're doing.",
+      "low": "This is nice. I feel okay."
+    },
+    "source": "Turner & Bateson 2014; McComb et al. 2009", "confidence": "medium"
+  },
+  {
+    "species_id": "felis_catus", "common_name": "Domestic Cat", "species_group": "cats",
+    "behavior_class": "aggression_warning",
+    "call_pattern": "Loud hiss with arched back, ears flattened",
+    "acoustic_features": {"frequency_range": "2000-8000 Hz", "duration_ms": "500-1500", "amplitude": "loud, explosive"},
+    "behavioral_meaning": "Defensive threat. Cat is frightened and will attack if pressed further.",
+    "behavioral_response": "Threat source should retreat. Cat may flee or attack.",
+    "translation_template": "BACK OFF! I am terrified and I WILL scratch you if you come any closer!",
+    "intensity_modifiers": {
+      "high": "STAY AWAY FROM ME! I'm cornered and I WILL fight! This is your ONLY warning!",
+      "medium": "I don't like this. Back up. Give me an escape route.",
+      "low": "I'm a bit nervous. Please don't crowd me."
+    },
+    "source": "Turner & Bateson 2014; Crowell-Davis et al. 2004", "confidence": "high"
+  },
+  {
+    "species_id": "felis_catus", "common_name": "Domestic Cat", "species_group": "cats",
+    "behavior_class": "mating_call",
+    "call_pattern": "Rapid chattering/clicking sounds while watching prey through window",
+    "acoustic_features": {"frequency_range": "1000-4000 Hz", "duration_ms": "50-100 per click", "amplitude": "moderate"},
+    "behavioral_meaning": "Predatory arousal and frustration. Cat sees prey it cannot reach.",
+    "behavioral_response": "Hunting behavior intensifies. May pounce if access becomes available.",
+    "translation_template": "That bird is RIGHT THERE and I can't get to it. I can almost taste it. So close!",
+    "intensity_modifiers": {
+      "high": "OH MY GOD that bird is RIGHT THERE! Let me OUT! I need to CATCH it! SO CLOSE!",
+      "medium": "Look at that bird... if only I could get through this window...",
+      "low": "Interesting. A bird. I'm watching it."
+    },
+    "source": "Turner & Bateson 2014; Bradshaw 2013", "confidence": "medium"
+  },
+  {
+    "species_id": "felis_catus", "common_name": "Domestic Cat", "species_group": "cats",
+    "behavior_class": "distress_call",
+    "call_pattern": "Loud, prolonged meowing, often at night",
+    "acoustic_features": {"frequency_range": "500-2000 Hz", "duration_ms": "500-2000", "amplitude": "loud, insistent"},
+    "behavioral_meaning": "Attention-seeking or distress. Meows are inter-species communication evolved specifically for humans.",
+    "behavioral_response": "Owner provides food, attention, or opens door.",
+    "translation_template": "Hello?! I need something and you're ignoring me! Pay attention to me RIGHT NOW!",
+    "intensity_modifiers": {
+      "high": "HELLO?! I've been calling for AGES! Feed me! Let me out! DO SOMETHING!",
+      "medium": "Hey, human — I need your attention. Can you come here please?",
+      "low": "Excuse me. When you get a moment, I'd like something."
+    },
+    "source": "Nicastro 2004; McComb et al. 2009", "confidence": "medium"
+  }
+]

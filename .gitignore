@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Environment
+.env
+venv/
+.venv/
+
+# Data (too large for git)
+data/raw/
+data/processed/
+data/cache/
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.npy
+
+# Model weights
+models/weights/
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.gguf
+
+# ChromaDB
+knowledge_base/chroma_db/
+
+# Experiment tracking
+wandb/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Gradio
+flagged/

@@ -1,0 +1,92 @@
+[
+  {
+    "species_id": "tursiops_truncatus", "common_name": "Bottlenose Dolphin", "species_group": "dolphins",
+    "behavior_class": "contact_call",
+    "call_pattern": "Unique ascending whistle pattern, repeated 2-5 times",
+    "acoustic_features": {"frequency_range": "5000-20000 Hz", "duration_ms": "500-1500", "amplitude": "moderate to loud"},
+    "behavioral_meaning": "Signature whistle — individual identity call. Dolphin announcing its presence to pod members.",
+    "behavioral_response": "Pod members respond with their own signature whistles. Group cohesion maintained.",
+    "translation_template": "It's me — it's me! I'm over here. Where are you? This is my call, remember it.",
+    "intensity_modifiers": {
+      "high": "Where IS everyone?! It's ME! I'm HERE! Can anyone hear my whistle?! RESPOND!",
+      "medium": "Hey pod, it's me. Just checking in. I'm swimming over by the reef.",
+      "low": "Just me, passing through. All good."
+    },
+    "source": "Herzing 2011; Janik & Slater 1998; Caldwell & Caldwell 1965", "confidence": "high"
+  },
+  {
+    "species_id": "tursiops_truncatus", "common_name": "Bottlenose Dolphin", "species_group": "dolphins",
+    "behavior_class": "navigation_echolocation",
+    "call_pattern": "Rapid click trains, 200-600 clicks per second",
+    "acoustic_features": {"frequency_range": "20000-130000 Hz", "duration_ms": "10-50 per train", "amplitude": "very high, directional"},
+    "behavioral_meaning": "Active echolocation for navigation and prey detection. Building acoustic map of environment.",
+    "behavioral_response": "Dolphin adjusts swimming path based on echo returns.",
+    "translation_template": "Scanning ahead... I can sense the bottom shape. Fish school 30 meters that way. Clear path ahead.",
+    "intensity_modifiers": {
+      "high": "Locked onto target! Fish school directly ahead! Accelerating — time to hunt!",
+      "medium": "Mapping the area. Some interesting echoes coming back from over there.",
+      "low": "Just a routine scan. Nothing unusual in the water ahead."
+    },
+    "source": "Au 1993; Herzing 2011; NOAA Marine Mammal Research", "confidence": "high"
+  },
+  {
+    "species_id": "tursiops_truncatus", "common_name": "Bottlenose Dolphin", "species_group": "dolphins",
+    "behavior_class": "play_vocalization",
+    "call_pattern": "Burst-pulse sounds mixed with whistles during social play",
+    "acoustic_features": {"frequency_range": "2000-15000 Hz", "duration_ms": "200-800", "amplitude": "variable, playful rhythm"},
+    "behavioral_meaning": "Social play and excitement. Often during chasing, leaping, or object play.",
+    "behavioral_response": "Play partners respond with similar burst-pulse sounds. Play escalates.",
+    "translation_template": "Catch me if you can! This is so fun! Let's jump together — WHEEE!",
+    "intensity_modifiers": {
+      "high": "THIS IS AMAZING! Chase me! Jump with me! Let's surf that wave! WOOHOO!",
+      "medium": "Having a good time. Come play with me — it's fun!",
+      "low": "Just goofing around a little. Feeling playful."
+    },
+    "source": "Herzing 2011; Janik 2000", "confidence": "medium"
+  },
+  {
+    "species_id": "megaptera_novaeangliae", "common_name": "Humpback Whale", "species_group": "whales",
+    "behavior_class": "mating_call",
+    "call_pattern": "Long, complex melodic song sequence lasting 10-30 minutes, with repeated themes",
+    "acoustic_features": {"frequency_range": "80-4000 Hz", "duration_ms": "600000-1800000", "amplitude": "extremely loud, 180+ dB"},
+    "behavioral_meaning": "Male breeding song. Advertising fitness, attracting females, establishing dominance over rivals.",
+    "behavioral_response": "Females assess and approach preferred singers. Rival males may counter-sing or challenge.",
+    "translation_template": "I am here. I am strong. Listen to how long I can sing. Come find me.",
+    "intensity_modifiers": {
+      "high": "HEAR ME across the ocean! I am the STRONGEST singer here! My song carries for MILES! Come to ME!",
+      "medium": "Singing my song. I've refined every note. I hope someone worthy is listening.",
+      "low": "Practicing my phrases. Getting the melody right for the season."
+    },
+    "source": "Payne & McVay 1971; Garland et al. 2011; NOAA/MBARI", "confidence": "high"
+  },
+  {
+    "species_id": "megaptera_novaeangliae", "common_name": "Humpback Whale", "species_group": "whales",
+    "behavior_class": "social_bonding",
+    "call_pattern": "Social calls — short, varied non-song vocalizations between individuals",
+    "acoustic_features": {"frequency_range": "50-2000 Hz", "duration_ms": "500-5000", "amplitude": "moderate"},
+    "behavioral_meaning": "Mother-calf bonding, pod coordination, social maintenance between non-singing individuals.",
+    "behavioral_response": "Calf stays close to mother. Pod members coordinate movement and diving.",
+    "translation_template": "Stay close to me, little one. We swim together. I'll keep you safe.",
+    "intensity_modifiers": {
+      "high": "Come HERE, baby! Stay RIGHT beside me! There may be danger — don't wander!",
+      "medium": "I'm right here with you. We'll dive together on my signal.",
+      "low": "Just us, swimming along. Nice and calm."
+    },
+    "source": "Payne 1995; NOAA Marine Mammal Program", "confidence": "medium"
+  },
+  {
+    "species_id": "lithobates_catesbeianus", "common_name": "American Bullfrog", "species_group": "frogs",
+    "behavior_class": "mating_call",
+    "call_pattern": "Deep 'jug-o-rum' bass call, repeated every few seconds",
+    "acoustic_features": {"frequency_range": "100-1500 Hz", "duration_ms": "500-1000", "amplitude": "very loud"},
+    "behavioral_meaning": "Male advertisement call. Broadcasting fitness, body size (lower pitch = larger frog).",
+    "behavioral_response": "Females approach preferred callers. Rival males may retreat or counter-call.",
+    "translation_template": "I am right here, I am ready, and I am the loudest male in this pond tonight.",
+    "intensity_modifiers": {
+      "high": "LISTEN TO MY VOICE! I am the BIGGEST, LOUDEST frog here! Come to MY territory!",
+      "medium": "Calling from my spot. I'm a quality male with good territory. Come check me out.",
+      "low": "Just warming up my voice for the evening chorus."
+    },
+    "source": "Duellman & Trueb 1994; Bee & Gerhardt 2001", "confidence": "high"
+  }
+]

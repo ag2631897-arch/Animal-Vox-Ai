@@ -1,0 +1,77 @@
+[
+  {
+    "species_id": "canis_familiaris", "common_name": "Domestic Dog", "species_group": "dogs",
+    "behavior_class": "aggression_warning",
+    "call_pattern": "Low sustained growl, teeth bared, no barking",
+    "acoustic_features": {"frequency_range": "80-300 Hz", "duration_ms": "1000-5000", "amplitude": "moderate, sustained"},
+    "behavioral_meaning": "Direct threat display. Dog is warning of imminent attack if approach continues.",
+    "behavioral_response": "Target should freeze, avoid eye contact, slowly back away.",
+    "translation_template": "Do not come any closer. I am warning you. This is your last warning before I act.",
+    "intensity_modifiers": {
+      "high": "BACK OFF RIGHT NOW. I am NOT bluffing. One more step and I WILL bite.",
+      "medium": "I don't like this. Stay where you are. I'm watching you very carefully.",
+      "low": "I'm a little uncomfortable. Please give me some space."
+    },
+    "source": "Bradshaw 2011; Yin 2002; Feddersen-Petersen 2000", "confidence": "high"
+  },
+  {
+    "species_id": "canis_familiaris", "common_name": "Domestic Dog", "species_group": "dogs",
+    "behavior_class": "play_vocalization",
+    "call_pattern": "Short, high-pitched repeated barks with play bow",
+    "acoustic_features": {"frequency_range": "500-2000 Hz", "duration_ms": "100-300", "amplitude": "variable, bouncy rhythm"},
+    "behavioral_meaning": "Play solicitation. Dog is excited and wants to engage in social play.",
+    "behavioral_response": "Play partner responds with reciprocal play signals.",
+    "translation_template": "Come on, come ON! Let's play! Why are you just standing there?? PLAY WITH ME!",
+    "intensity_modifiers": {
+      "high": "PLAY! PLAY! PLAY! I can't CONTAIN myself! Throw the ball! Chase me! DO SOMETHING!",
+      "medium": "Hey, wanna play? I'm in the mood for some fun! Come on!",
+      "low": "I could go for a little game if you're up for it."
+    },
+    "source": "Bekoff 2001; Bradshaw 2011", "confidence": "high"
+  },
+  {
+    "species_id": "canis_familiaris", "common_name": "Domestic Dog", "species_group": "dogs",
+    "behavior_class": "distress_call",
+    "call_pattern": "High-pitched whining or whimpering, continuous",
+    "acoustic_features": {"frequency_range": "300-3000 Hz", "duration_ms": "500-2000", "amplitude": "moderate, plaintive"},
+    "behavioral_meaning": "Separation anxiety, pain, or fear. Dog is communicating distress and seeking comfort.",
+    "behavioral_response": "Owner should assess for pain, provide comfort, or address separation trigger.",
+    "translation_template": "I'm scared and I don't know what to do. Please don't leave me. I need you here.",
+    "intensity_modifiers": {
+      "high": "Please PLEASE don't leave me alone! I can't handle this! Something is WRONG!",
+      "medium": "I'm not feeling great about this situation. Can you come back?",
+      "low": "I miss you. Just a little worried but I'll manage."
+    },
+    "source": "Bradshaw 2011; Overall 2013", "confidence": "high"
+  },
+  {
+    "species_id": "canis_familiaris", "common_name": "Domestic Dog", "species_group": "dogs",
+    "behavior_class": "submission_signal",
+    "call_pattern": "Soft whimper with lowered body, tail tucked, averting gaze",
+    "acoustic_features": {"frequency_range": "200-1500 Hz", "duration_ms": "300-800", "amplitude": "quiet"},
+    "behavioral_meaning": "Appeasement signal. Dog is communicating non-threat and deference.",
+    "behavioral_response": "Dominant individual relaxes aggression. Social tension resolved.",
+    "translation_template": "I'm not a threat. I'm no challenge to you. Please, I just want peace.",
+    "intensity_modifiers": {
+      "high": "Please don't hurt me! I surrender completely! I'm no threat to you at all!",
+      "medium": "Okay, okay — you're the boss. I'll back down. No trouble from me.",
+      "low": "Hey, just being friendly. No competition here."
+    },
+    "source": "Yin 2002; Bradshaw 2011", "confidence": "high"
+  },
+  {
+    "species_id": "canis_familiaris", "common_name": "Domestic Dog", "species_group": "dogs",
+    "behavior_class": "social_bonding",
+    "call_pattern": "Long, melodic howl, often triggered by other howls or music",
+    "acoustic_features": {"frequency_range": "150-1500 Hz", "duration_ms": "3000-10000", "amplitude": "loud, sustained"},
+    "behavioral_meaning": "Pack bonding vocalization. Reinforcing social bonds, announcing presence to distant pack members.",
+    "behavioral_response": "Other dogs may join in howling. Creates group cohesion.",
+    "translation_template": "I'm here! Can you hear me? I'm calling to all of you — we're a family!",
+    "intensity_modifiers": {
+      "high": "LISTEN TO ME! I'm calling to my pack! Everyone join in! We are TOGETHER!",
+      "medium": "Singing our song. I feel connected to all of you right now.",
+      "low": "Just howling along. Feels nice to let it out."
+    },
+    "source": "Harrington & Asa 2003; Lord et al. 2009", "confidence": "medium"
+  }
+]
