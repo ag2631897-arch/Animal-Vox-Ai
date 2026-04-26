@@ -23,7 +23,7 @@
 
 <br/>
 
-[**📘 PRD**](./docs/AnimalVox_PRD.docx) • [**📗 TRD**](./docs/AnimalVox_TRD.docx) • [**📙 Implementation Plan**](./docs/AnimalVox_Implementation_Plan.docx) • [**📕 Project Explainer**](./docs/AnimalVox_Project_Explainer.docx)
+[**📙 Implementation Plan**](./docs/AnimalVox_Implementation_Plan.docx) • [**📕 Project Explainer**](./docs/AnimalVox_Project_Explainer.docx)
 
 <br/>
 
