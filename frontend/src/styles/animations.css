@@ -1,0 +1,35 @@
+@keyframes sonar-ring { 0% { transform: scale(.7); opacity: .65; } 100% { transform: scale(1.55); opacity: 0; } }
+@keyframes record-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(0,201,167,.38),0 0 38px #00c9a755; } 50% { box-shadow: 0 0 0 16px rgba(0,201,167,0),0 0 42px #00c9a766; } }
+@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+@keyframes hex-drift { from { transform: translateY(0); } to { transform: translateY(-32px); } }
+@keyframes waveform-bob { from { transform: scaleY(.45); opacity: .6; } to { transform: scaleY(1); opacity: 1; } }
+@keyframes scroll-bounce { 0%,100% { transform: translateY(0); } 50% { transform: translateY(5px); } }
+@keyframes float-card { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+@keyframes cursor-blink { 0%,48% { opacity: 1; } 49%,100% { opacity: 0; } }
+@keyframes radar-rotate { to { transform: rotate(360deg); } }
+@keyframes radar-pulse { 0%,100% { transform: scale(.88); opacity: .55; } 50% { transform: scale(1.08); opacity: 1; } }
+@keyframes audio-progress { from { width: 8%; } to { width: 68%; } }
+@keyframes dot-pulse { 0%,100% { transform: scale(.8); opacity: .55; } 50% { transform: scale(1.15); opacity: 1; } }
+@keyframes segment-enter { from { transform: scaleX(0); transform-origin: left; } to { transform: scaleX(1); transform-origin: left; } }
+@keyframes bracket-glow { 0%,100% { opacity: .3; } 50% { opacity: .75; } }
+
+.sonar-rings { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
+.sonar-rings i { position: absolute; width: 130px; height: 130px; border: 1px solid var(--accent); border-radius: 50%; opacity: .15; }
+.sonar-rings i:nth-child(2) { width: 190px; height: 190px; }
+.sonar-rings i:nth-child(3) { width: 250px; height: 250px; }
+.sonar-active i { animation: sonar-ring 1.5s ease-out infinite; }
+.sonar-active i:nth-child(2) { animation-delay: .5s; }
+.sonar-active i:nth-child(3) { animation-delay: 1s; }
+.record-button:not(:disabled) { animation: record-pulse 2s ease-in-out infinite; }
+.is-recording .record-button { animation-duration: 1s; }
+
+.shimmer { border-radius: 7px; background: linear-gradient(90deg,var(--skeleton-base) 0%,var(--skeleton-shine) 50%,var(--skeleton-base) 100%); background-size: 200% 100%; animation: shimmer 1.35s ease-in-out infinite; }
+.reveal-word { will-change: opacity,filter,transform; }
+.activity-bar { transition: filter .18s ease, box-shadow .18s ease; }
+.activity-column:hover .activity-bar { filter: brightness(1.25); box-shadow: 0 0 15px #00c9a788; }
+.emotion-segment { animation: segment-enter .3s cubic-bezier(.2,.7,.2,1) both; }
+.radar-dot { animation: radar-pulse 1.5s ease-in-out infinite; }
+.radar-dot:nth-of-type(2) { animation-delay: .24s; }
+.radar-dot:nth-of-type(3) { animation-delay: .48s; }
+.audio-is-playing > span { animation: audio-progress 3s ease-in-out infinite alternate; }
+@media (prefers-reduced-motion: reduce) { .sonar-active i,.record-button,.shimmer,.hex-grid,.hero-demo,.scroll-cue,.waveform-live i { animation-duration: 3s !important; } }

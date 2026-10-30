@@ -55,6 +55,7 @@ class AnimalAcousticEncoder(nn.Module):
         self.species_group = species_group
         self.embed_dim = embed_dim
         self.projection_dim = projection_dim
+        self.has_trained_weights = False
 
         # ── BEATs Encoder ────────────────────────────────────
         # In production, load from HuggingFace Hub:

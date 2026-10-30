@@ -1,23 +1,40 @@
 """
-AnimalVox AI — End-to-End Inference Pipeline
-Orchestrates all 5 stages: preprocessing → feature extraction
-→ classification → context reasoning → NLG translation.
+AnimalVox AI — Enhanced End-to-End Inference Pipeline (SRS v1.1)
+=================================================================
+Integrates all 5 intelligence modules + anti-spoofing + streaming:
+
+Stage 0: Anti-Spoofing Gatekeeper (human imitation rejection)
+Stage 1: Audio Preprocessing
+Stage 2: Feature Extraction (BEATs + CNN + Prosodic)
+Stage 3: Behavioral Classification
+Stage 4: Context Reasoning (Sequence Transformer)
+Stage 5: NLG Translation (Groq streaming)
+
+Module Enrichment (parallel):
+  - Module 01: Pet Health Monitoring
+  - Module 02: Breed Identification
+  - Module 03: Emotional & Behavioural Tracking
+  - Module 04: Wellbeing Signals Dashboard
+  - Module 05: Animal Detection & Auto-Routing
 """
 
 import json
 import time
+import asyncio
 import logging
+import re
 import numpy as np
 import torch
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, AsyncGenerator
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config import (
-    AUDIO_CONFIG, MODEL_CONFIG, INFERENCE_CONFIG,
-    BEHAVIOR_LABELS, SPECIES_GROUPS, NUM_SPECIES_GROUPS
+    AUDIO_CONFIG, MODEL_CONFIG, INFERENCE_CONFIG, STREAMING_CONFIG,
+    BEHAVIOR_LABELS, SPECIES_GROUPS, NUM_SPECIES_GROUPS,
+    MEDICAL_DISCLAIMER
 )
 from data.preprocessing.standardize_audio import preprocess_audio, preprocess_audio_bytes
 from data.preprocessing.generate_spectrograms import generate_mel_spectrogram, mel_to_image
@@ -26,17 +43,28 @@ from models.acoustic_encoder.encoder import AnimalAcousticEncoder
 from models.behavioral_classifier.classifier import BehavioralClassifier, SpectrogramCNN
 from models.sequence_model.call_sequence_transformer import CallSequenceTransformer
 from models.nlg_layer.prompt_templates import build_prompt, SYSTEM_PROMPT
+from models.nlg_layer.bioacoustic_translator import generate_human_translation
 from knowledge_base.ethology_db import EthologyKnowledgeBase
+
+# New module imports (SRS v1.1)
+from models.anti_spoofing.detector import AntiSpoofingGatekeeper
+from models.animal_detector.detector import AnimalDetectionPipeline
+from models.health_monitor.monitor import HealthMonitor
+from models.breed_identifier.identifier import BreedIdentifier
+from models.emotional_tracker.tracker import EmotionalTracker
+from models.wellbeing_signals.dashboard import WellbeingDashboard
 
 logger = logging.getLogger(__name__)
 
 
 class AnimalVoxPipeline:
     """
-    Complete AnimalVox AI inference pipeline.
-    
-    Audio → Preprocessing → Feature Extraction (3 paths) →
-    Behavioral Classification → Context Reasoning → LLM Translation
+    Complete AnimalVox AI inference pipeline (SRS v1.1).
+
+    Audio → Anti-Spoofing Gate → Auto-Detection → Preprocessing →
+    Feature Extraction (3 paths) → Behavioral Classification →
+    Context Reasoning → LLM Translation (streaming) →
+    Health + Emotion + Breed + Wellbeing enrichment
     """
 
     def __init__(self, device: str = None, groq_api_key: str = None):
@@ -44,6 +72,7 @@ class AnimalVoxPipeline:
         self.groq_api_key = groq_api_key
         self.call_history: List[Dict] = []
         self._models_loaded = False
+        self._modules_loaded = False
 
         # Initialize knowledge base
         self.kb = EthologyKnowledgeBase(use_chroma=False)
@@ -51,11 +80,11 @@ class AnimalVoxPipeline:
         logger.info(f"Knowledge base loaded: {self.kb.size} entries")
 
     def load_models(self):
-        """Load all AI models (lazy loading for fast startup)."""
+        """Load core AI models (lazy loading for fast startup)."""
         if self._models_loaded:
             return
 
-        logger.info("Loading models...")
+        logger.info("Loading core models...")
         dev = self.device
 
         # Path A: Acoustic encoder
@@ -67,7 +96,7 @@ class AnimalVoxPipeline:
         self.cnn.to(dev).eval()
 
         # Stage 3: Behavioral classifier
-        self.classifier = BehavioralClassifier(input_dim=522, n_cls=12)
+        self.classifier = BehavioralClassifier(input_dim=522, n_cls=12, device=dev)
         self.classifier.to(dev).eval()
 
         # Stage 6: Sequence transformer
@@ -75,16 +104,77 @@ class AnimalVoxPipeline:
         self.seq_model.to(dev).eval()
 
         self._models_loaded = True
-        logger.info("All models loaded successfully")
+        logger.info("Core models loaded successfully")
+
+    def load_modules(self):
+        """Load SRS v1.1 intelligence modules (lazy loading)."""
+        if self._modules_loaded:
+            return
+
+        logger.info("Loading intelligence modules...")
+        dev = self.device
+
+        # Stage 0: Anti-Spoofing
+        self.anti_spoof = AntiSpoofingGatekeeper(device=dev)
+
+        # Module 05: Animal Detection
+        self.animal_detector = AnimalDetectionPipeline(device=dev)
+
+        # Module 01: Health Monitor
+        self.health_monitor = HealthMonitor(device=dev)
+
+        # Module 02: Breed Identifier
+        self.breed_identifier = BreedIdentifier(device=dev)
+
+        # Module 03: Emotional Tracker
+        self.emotional_tracker = EmotionalTracker(device=dev)
+
+        # Module 04: Wellbeing Dashboard
+        self.wellbeing = WellbeingDashboard(device=dev)
+
+        self._modules_loaded = True
+        logger.info("All intelligence modules loaded")
+        self._print_module_status_banner()
+
+    def _print_module_status_banner(self):
+        """Log ASCII banner displaying execution modes of all modules."""
+        modes = {
+            "Behavioral Classifier": "TRAINED (12-Class Neural)" if getattr(self.classifier, 'has_trained_weights', False) else "ACOUSTIC HEURISTIC (Morton Ethology Rules)",
+            "Anti-Spoofing Gate": "TRAINED (ECAPA-TDNN)" if getattr(self.anti_spoof, 'has_trained_weights', False) else "ACOUSTIC HEURISTIC (Formant / VTL Physics)",
+            "Animal Detector": "TRAINED (CNN Auto-Route)" if getattr(self.animal_detector, 'has_trained_weights', False) else "ACOUSTIC HEURISTIC (Spectral & VAD)",
+            "Health Monitor": "TRAINED (8-Flag Multi-Label)" if getattr(self.health_monitor, 'has_trained_weights', False) else "ACOUSTIC HEURISTIC (Biomarker Rules)",
+            "Emotion Tracker": "TRAINED (10-Class Neural)" if getattr(self.emotional_tracker, 'has_trained_weights', False) else "ACOUSTIC HEURISTIC (Morton's Rules)",
+            "Breed Identifier": "TRAINED (Acoustic + Visual)" if getattr(self.breed_identifier, 'has_trained_weights', False) else "ACOUSTIC HEURISTIC (Profile Distance)",
+        }
+        logger.info("=" * 64)
+        logger.info("🐾 AnimalVox AI Intelligence Engine — Module Status:")
+        for mod, mode in modes.items():
+            logger.info(f"  • {mod:<22}: {mode}")
+        logger.info("=" * 64)
+
+    def get_system_status(self) -> Dict[str, Any]:
+        """Return real-time weight & fallback status for all modules."""
+        from models.weight_manager import get_weights_status
+        return {
+            "device": self.device,
+            "models_loaded": self._models_loaded,
+            "modules_loaded": self._modules_loaded,
+            "weights_status": get_weights_status(),
+        }
 
     def _extract_features(self, audio_clip: np.ndarray) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Extract features from all 3 parallel paths."""
         dev = self.device
 
-        # Path A: Audio embedding
-        audio_tensor = torch.from_numpy(audio_clip).float().unsqueeze(0).to(dev)
-        with torch.no_grad():
-            audio_embed = self.encoder(audio_tensor)  # (1, 256)
+        # Path A: Audio embedding (BEATs foundation backbone)
+        if getattr(self.encoder, 'has_trained_weights', False):
+            audio_tensor = torch.from_numpy(audio_clip).float().unsqueeze(0).to(dev)
+            with torch.no_grad():
+                audio_embed = self.encoder(audio_tensor)  # (1, 256)
+        else:
+            from training.feature_extractor import extract_beats_embedding
+            beats_emb = extract_beats_embedding(audio_clip, sr=AUDIO_CONFIG.sample_rate, embed_dim=256)
+            audio_embed = torch.from_numpy(beats_emb).float().unsqueeze(0).to(dev)
 
         # Path B: Spectrogram CNN
         mel = generate_mel_spectrogram(audio_clip)
@@ -99,15 +189,103 @@ class AnimalVoxPipeline:
 
         return audio_embed, cnn_features, prosodic_tensor
 
-    def _classify(self, audio_embed, cnn_features, prosodic) -> Dict:
-        """Run behavioral classification on fused features."""
-        fused = torch.cat([audio_embed, cnn_features, prosodic], dim=-1)
-        with torch.no_grad():
-            labels, intensity, urgency = self.classifier(fused)
+    def _get_prosodic_dict(self, audio_clip: np.ndarray) -> Dict:
+        """Extract prosodic features as a dictionary for module consumption."""
+        import librosa
+        sr = AUDIO_CONFIG.sample_rate
 
-        labels_np = labels.cpu().numpy()[0]
-        intensity_val = float(intensity.cpu().numpy()[0][0])
-        urgency_val = float(urgency.cpu().numpy()[0][0])
+        # Clips shorter than the fixed five-second model window are zero-padded
+        # during preprocessing.  Including that padding makes a short bark
+        # appear quiet, long and low-pitched, which in turn can turn a warning
+        # into an unrelated behaviour.  Keep the audible span (including the
+        # natural pauses within it) for prosodic measurements.
+        analysis_audio = audio_clip
+        try:
+            _, active_interval = librosa.effects.trim(audio_clip, top_db=45)
+            active_start, active_end = active_interval
+            if active_end - active_start >= int(0.1 * sr):
+                analysis_audio = audio_clip[active_start:active_end]
+        except Exception:
+            logger.debug("Could not trim silent padding before prosody extraction", exc_info=True)
+
+        f0, _, _ = librosa.pyin(
+            analysis_audio, fmin=50, fmax=4000, sr=sr
+        )
+        f0_valid = f0[~np.isnan(f0)] if f0 is not None else np.array([0.0])
+        if len(f0_valid) == 0:
+            f0_valid = np.array([0.0])
+
+        # Harmonics-to-Noise Ratio proxy via spectral flatness in dB
+        sf = librosa.feature.spectral_flatness(y=analysis_audio)[0]
+        mean_sf = float(np.mean(sf)) + 1e-8
+        hnr_db = float(-10.0 * np.log10(mean_sf))
+        hnr_db = float(np.clip(hnr_db, 0.0, 35.0))
+
+        zcr = librosa.feature.zero_crossing_rate(analysis_audio)[0]
+        rms = librosa.feature.rms(y=analysis_audio)[0]
+        centroid = librosa.feature.spectral_centroid(y=analysis_audio, sr=sr)[0]
+        rolloff = librosa.feature.spectral_rolloff(y=analysis_audio, sr=sr)[0]
+
+        # Call rate: onsets per second
+        try:
+            onset_frames = librosa.onset.onset_detect(y=analysis_audio, sr=sr)
+            duration_s = max(len(analysis_audio) / sr, 0.01)
+            call_rate_val = float(len(onset_frames) / duration_s)
+        except Exception:
+            call_rate_val = 1.0
+
+        # F0 slope: direction of pitch trajectory
+        if len(f0_valid) >= 2:
+            x = np.arange(len(f0_valid))
+            f0_slope = float(np.polyfit(x, f0_valid, 1)[0])
+        else:
+            f0_slope = 0.0
+
+        try:
+            tempo, _ = librosa.beat.beat_track(y=analysis_audio, sr=sr)
+            tempo_val = float(tempo) if np.isscalar(tempo) else float(tempo[0]) if len(tempo) > 0 else 100.0
+        except Exception:
+            tempo_val = 100.0
+
+        return {
+            "mean_f0": float(np.mean(f0_valid)),
+            "f0_range": float(np.ptp(f0_valid)),
+            "f0_slope": f0_slope,
+            "mean_hnr": hnr_db,
+            "call_rate": call_rate_val,
+            "mean_rms": float(np.mean(rms)) if len(rms) > 0 else 0.0,
+            "spectral_centroid": float(np.mean(centroid)) if len(centroid) > 0 else 0.0,
+            "mean_call_duration": float(len(analysis_audio) / sr),
+            "mean_zcr": float(np.mean(zcr)) if len(zcr) > 0 else 0.0,
+            "mean_spectral_rolloff": float(np.mean(rolloff)) if len(rolloff) > 0 else 0.0,
+            "tempo": tempo_val,
+        }
+
+    def _classify(
+        self,
+        audio_embed: torch.Tensor,
+        cnn_features: torch.Tensor,
+        prosodic: torch.Tensor,
+        prosodic_dict: Optional[Dict[str, float]] = None,
+        species: str = "dogs",
+        audio_clip: Optional[np.ndarray] = None
+    ) -> Dict:
+        """Run behavioral classification on fused features (Neural or Ethological Fallback)."""
+        fused = torch.cat([audio_embed, cnn_features, prosodic], dim=-1)
+
+        if hasattr(self.classifier, "classify") and prosodic_dict is not None:
+            labels_np, intensity_val, urgency_val = self.classifier.classify(
+                fused_tensor=fused,
+                prosodic=prosodic_dict,
+                species=species,
+                audio_clip=audio_clip
+            )
+        else:
+            with torch.no_grad():
+                labels, intensity, urgency = self.classifier(fused)
+            labels_np = labels.cpu().numpy()[0]
+            intensity_val = float(intensity.cpu().numpy()[0][0])
+            urgency_val = float(urgency.cpu().numpy()[0][0])
 
         # Get top behaviors (threshold 0.3)
         detected = []
@@ -134,7 +312,8 @@ class AnimalVoxPipeline:
             "intensity": intensity_val,
             "urgency": urgency_val,
             "all_scores": labels_np.tolist(),
-            "audio_embed": audio_embed
+            "audio_embed": audio_embed,
+            "fused_embed": fused
         }
 
     def _get_sequence_context(self, classification: Dict, species: str) -> Tuple[str, str]:
@@ -176,9 +355,116 @@ class AnimalVoxPipeline:
         return ctx_desc, esc_pattern
 
     async def _generate_translation(self, species: str, classification: Dict,
-                                     seq_context: str, escalation: str) -> Dict:
-        """Generate natural language translation via Groq API."""
-        behavior_names = [b["name"] for b in classification["behaviors"]]
+                                     seq_context: str, escalation: str,
+                                     emotion: Optional[str] = None,
+                                     breed: Optional[str] = None) -> Dict:
+        """Generate natural language translation via Groq API or bioacoustic engine."""
+        # Multi-label acoustic affinities are useful evidence, but asking the
+        # NLG model to narrate all of them encourages invented stories such as
+        # "first an alarm, then play, then loneliness."  Translate only the
+        # primary behavioural interpretation.
+        behavior_names = [classification["behaviors"][0]["name"]]
+        primary_behavior = behavior_names[0]
+        translation_emotion = self._select_translation_emotion(primary_behavior, emotion)
+        ethology_ctx = self.kb.get_context_for_llm(species, behavior_names)
+
+        prompt = build_prompt(
+            species=species,
+            species_detail=breed,
+            behavior_labels=behavior_names,
+            intensity=classification["intensity"],
+            urgency=classification["urgency"],
+            sequence_context=seq_context,
+            escalation=escalation,
+            ethology_context=ethology_ctx,
+            emotional_state=translation_emotion
+        )
+
+        # Try Groq API first
+        if self.groq_api_key:
+            try:
+                res = await self._call_groq(prompt)
+                if self._is_grounded_translation(res, primary_behavior):
+                    # Keep the LLM only for its concise wording.  Structured
+                    # labels and context come from the local, auditable
+                    # ethology map rather than from creative model prose.
+                    fallback = self._fallback_translation(
+                        species=species,
+                        classification=classification,
+                        emotion=translation_emotion,
+                        breed=breed,
+                    )
+                    fallback["translation"] = res["translation"].strip()
+                    return fallback
+                logger.warning("Discarding unsupported LLM translation; using ethology template")
+            except Exception as e:
+                logger.warning(f"Groq API failed: {e}, using bioacoustic translation engine")
+
+        # Fallback: bioacoustic ethological translation
+        return self._fallback_translation(
+            species=species, classification=classification,
+            emotion=translation_emotion, breed=breed
+        )
+
+    def _select_translation_emotion(self, behavior: str, detected_emotion: Optional[str]) -> str:
+        """Use a modelled emotion only when it agrees with the primary call type."""
+        behavior = (behavior or "").lower()
+        detected = (detected_emotion or "").lower()
+        compatible_terms = {
+            "alarm_aerial": ("stress", "fear", "alert", "vigil"),
+            "alarm_ground": ("stress", "fear", "alert", "vigil", "territor", "frustrat"),
+            "territorial_warning": ("territor", "stress", "frustrat", "alert", "vigil"),
+            "aggression_warning": ("stress", "frustrat", "territor", "alert", "vigil"),
+            "distress_call": ("stress", "fear", "pain"),
+            "play_vocalization": ("play", "excit"),
+            "social_bonding": ("bond", "content"),
+            "contact_call": ("bond", "lonel"),
+            "feeding_call": ("hunger", "excit"),
+        }
+        if detected and any(term in detected for term in compatible_terms.get(behavior, ())):
+            return detected_emotion
+        return self._infer_emotion(behavior, 0.0)
+
+    @staticmethod
+    def _is_grounded_translation(response: Optional[Dict], behavior: str) -> bool:
+        """Reject creative LLM prose that is unsupported by one call label."""
+        if not isinstance(response, dict):
+            return False
+
+        text = str(response.get("translation", "")).strip()
+        words = re.findall(r"[A-Za-z']+", text)
+        if not 4 <= len(words) <= 40 or len(re.findall(r"[.!?]", text)) > 2:
+            return False
+
+        lowered = text.lower()
+        # A result should state a probable communicative meaning, not narrate
+        # the audio analysis (the failure mode in the original screenshot).
+        analysis_words = (
+            "bark", "barking", "growl", "growling", "vocalization",
+            "high-pitched", "low-pitched", "pitch", "shift", "first",
+            "then i", "after i", "call type",
+        )
+        if any(term in lowered for term in analysis_words):
+            return False
+
+        incompatible_terms = {
+            "alarm_aerial": ("play", "lonely", "food", "mate"),
+            "alarm_ground": ("play", "lonely", "food", "mate", "friend"),
+            "territorial_warning": ("play", "lonely", "food", "mate", "friend"),
+            "aggression_warning": ("play", "lonely", "food", "mate", "friend"),
+            "distress_call": ("play", "food", "mate"),
+        }
+        return not any(term in lowered for term in incompatible_terms.get(behavior, ()))
+
+    async def _generate_translation_stream(self, species: str, classification: Dict,
+                                            seq_context: str, escalation: str) -> AsyncGenerator[str, None]:
+        """
+        Stream translation tokens via Groq SSE for real-time display.
+        
+        Yields individual tokens as they arrive from the LLM,
+        enabling word-by-word karaoke-style display.
+        """
+        behavior_names = [classification["behaviors"][0]["name"]]
         ethology_ctx = self.kb.get_context_for_llm(species, behavior_names)
 
         prompt = build_prompt(
@@ -192,18 +478,41 @@ class AnimalVoxPipeline:
             ethology_context=ethology_ctx
         )
 
-        # Try Groq API first
-        if self.groq_api_key:
-            try:
-                return await self._call_groq(prompt)
-            except Exception as e:
-                logger.warning(f"Groq API failed: {e}, using fallback")
+        if not self.groq_api_key:
+            # Fallback: yield full translation at once
+            result = self._fallback_translation(species, classification)
+            for word in result.get("translation", "").split():
+                yield word + " "
+            return
 
-        # Fallback: template-based translation
-        return self._fallback_translation(species, classification)
+        try:
+            from groq import AsyncGroq
+
+            client = AsyncGroq(api_key=self.groq_api_key)
+            stream = await client.chat.completions.create(
+                model=INFERENCE_CONFIG.groq_model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=INFERENCE_CONFIG.groq_temperature,
+                max_tokens=INFERENCE_CONFIG.groq_max_tokens,
+                stream=True  # Enable streaming
+            )
+
+            async for chunk in stream:
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    yield delta.content
+
+        except Exception as e:
+            logger.warning(f"Groq streaming failed: {e}, using fallback")
+            result = self._fallback_translation(species, classification)
+            for word in result.get("translation", "").split():
+                yield word + " "
 
     async def _call_groq(self, prompt: str) -> Dict:
-        """Call Groq API for Mistral 7B inference."""
+        """Call Groq API for LLM inference."""
         from groq import AsyncGroq
 
         client = AsyncGroq(api_key=self.groq_api_key)
@@ -225,24 +534,24 @@ class AnimalVoxPipeline:
             return {"translation": text, "vocalization_type": "unknown",
                     "emotion": "unknown", "behavior_context": "", "confidence": "low"}
 
-    def _fallback_translation(self, species: str, classification: Dict) -> Dict:
-        """Template-based fallback when LLM is unavailable."""
+    def _fallback_translation(self, species: str, classification: Dict,
+                               emotion: Optional[str] = None,
+                               breed: Optional[str] = None) -> Dict:
+        """Bioacoustic ethology-grounded human translation when LLM is unavailable."""
         top_behavior = classification["behaviors"][0]
-        template = self.kb.get_translation_template(
-            species, top_behavior["name"], classification["intensity"]
+        behavior_name = top_behavior["name"]
+        intensity = classification.get("intensity", 0.5)
+        urgency = classification.get("urgency", 0.5)
+
+        # Use comprehensive Bioacoustic Human Translation Engine
+        return generate_human_translation(
+            species=species,
+            behavior=behavior_name,
+            intensity=intensity,
+            emotion=emotion,
+            breed=breed,
+            urgency=urgency
         )
-
-        if not template:
-            template = f"[{species}] Detected {top_behavior['name']} behavior (intensity: {classification['intensity']:.0%})"
-
-        return {
-            "translation": template,
-            "vocalization_type": top_behavior["name"].replace("_", " ").title(),
-            "emotion": self._infer_emotion(top_behavior["name"], classification["intensity"]),
-            "behavior_context": f"Detected {', '.join(b['name'] for b in classification['behaviors'])} "
-                               f"with {classification['intensity']:.0%} intensity.",
-            "confidence": "high" if top_behavior["score"] > 0.7 else "medium" if top_behavior["score"] > 0.4 else "low"
-        }
 
     def _infer_emotion(self, behavior: str, intensity: float) -> str:
         """Map behavior to emotional state."""
@@ -263,15 +572,31 @@ class AnimalVoxPipeline:
         return emotion_map.get(behavior, "unknown")
 
     async def translate(self, audio_path: str = None, audio_bytes: bytes = None,
-                        audio_format: str = "wav", species: str = "birds") -> Dict:
+                        audio_format: str = "wav", species: str = None,
+                        pet_id: str = None, photo_features: torch.Tensor = None,
+                        enable_modules: bool = True) -> Dict:
         """
         Main entry point: translate animal audio to human language.
-        
+
+        Enhanced with anti-spoofing, auto-detection, and all 5 modules.
+
+        Args:
+            audio_path: Path to audio file
+            audio_bytes: Raw audio bytes
+            audio_format: Audio format string
+            species: Species key (None = auto-detect via Module 05)
+            pet_id: Optional pet profile ID for baseline tracking
+            photo_features: Optional visual features for breed ID
+            enable_modules: Run enrichment modules (health, emotion, etc.)
+
         Returns dict with: translation, vocalization_type, emotion,
-        behavior_context, confidence, behaviors, intensity, urgency, timing
+        behavior_context, confidence, behaviors, intensity, urgency,
+        timing, and enriched module outputs.
         """
         start_time = time.time()
         self.load_models()
+        if enable_modules:
+            self.load_modules()
 
         # Stage 1: Preprocessing
         if audio_path:
@@ -284,34 +609,396 @@ class AnimalVoxPipeline:
         if not clips:
             return {"error": "No audio content detected", "translation": ""}
 
-        # Use the first clip (or best clip in future)
-        clip = clips[0]
+        # Select the clip with highest acoustic vocal energy (avoids silent pre-roll in longer recordings)
+        clip = max(clips, key=lambda c: float(np.sqrt(np.mean(c**2))))
+
+        # ── Stage 0: Anti-Spoofing Gate ──────────────────────
+        spoof_result = None
+        if enable_modules:
+            spoof_result = self.anti_spoof.check(clip, sr=AUDIO_CONFIG.sample_rate)
+            if spoof_result.is_human:
+                elapsed = time.time() - start_time
+                return {
+                    "error": "human_detected",
+                    "translation": "",
+                    "message": "🚫 Human voice detected, not an animal! "
+                               "AnimalVox AI only translates real animal vocalizations.",
+                    "human_probability": spoof_result.human_probability,
+                    "rejection_reason": spoof_result.rejection_reason,
+                    "confidence": spoof_result.confidence,
+                    "processing_time_ms": int(elapsed * 1000),
+                }
 
         # Stage 2: Feature extraction (3 parallel paths)
-        audio_embed, cnn_features, prosodic = self._extract_features(clip)
+        audio_embed, cnn_features, prosodic_tensor = self._extract_features(clip)
+        prosodic_dict = self._get_prosodic_dict(clip)
+        fused_266 = torch.cat([audio_embed, prosodic_tensor], dim=-1)
+
+        # ── Module 05: Auto-Detection (if no species specified) ──
+        detection_result = None
+        if species is None and enable_modules:
+            detection_result = self.animal_detector.detect(clip, audio_embed)
+
+            if not detection_result.has_animal:
+                elapsed = time.time() - start_time
+                return {
+                    "error": "no_animal_detected",
+                    "translation": "",
+                    "message": "No animal vocalization detected in this audio.",
+                    "soundscape": detection_result.soundscape,
+                    "processing_time_ms": int(elapsed * 1000),
+                }
+
+            # Use top detection as species
+            if detection_result.species_detections:
+                species = detection_result.species_detections[0]["species"]
+            else:
+                species = "dogs"  # Default fallback
+
+        species = species or "dogs"
 
         # Stage 3: Behavioral classification
-        classification = self._classify(audio_embed, cnn_features, prosodic)
+        classification = self._classify(
+            audio_embed, cnn_features, prosodic_tensor,
+            prosodic_dict=prosodic_dict, species=species, audio_clip=clip
+        )
 
         # Stage 4: Context reasoning
         seq_context, escalation = self._get_sequence_context(classification, species)
 
-        # Stage 5: NLG Translation
-        translation = await self._generate_translation(species, classification, seq_context, escalation)
+        # ── Module Enrichment (parallel) ───────────────────────
+        health_report = None
+        breed_report = None
+        emotion_report = None
+        wellbeing_report = None
+
+        if enable_modules:
+            # Module 01: Health Monitoring (266-dim feature vector)
+            try:
+                health_report = self.health_monitor.assess(
+                    audio=clip, fused_embedding=fused_266,
+                    prosodic_features=prosodic_dict, species=species,
+                    pet_id=pet_id
+                )
+            except Exception as e:
+                logger.warning(f"Health monitor error: {e}")
+
+            # Module 02: Breed Identification (dogs/cats only, 266-dim)
+            try:
+                breed_report = self.breed_identifier.identify(
+                    fused_embedding=fused_266,
+                    prosodic_features=prosodic_dict,
+                    species=species,
+                    visual_features=photo_features
+                )
+            except Exception as e:
+                logger.warning(f"Breed identifier error: {e}")
+
+            # Module 03: Emotional Tracking (266-dim)
+            try:
+                emotion_report = self.emotional_tracker.assess(
+                    fused_embedding=fused_266,
+                    prosodic_features=prosodic_dict,
+                    species=species,
+                    pet_id=pet_id
+                )
+            except Exception as e:
+                logger.warning(f"Emotional tracker error: {e}")
+
+            # A wellbeing score needs a pet profile and history.  Presenting a
+            # score for a single anonymous bark looks authoritative but has no
+            # meaningful baseline, so only compute it for a named pet.
+            if pet_id:
+                try:
+                    diary_entries = self.emotional_tracker.diary.get_entries(pet_id, days=7)
+                    soundscape = detection_result.soundscape if detection_result else ""
+                    wellbeing_report = self.wellbeing.assess(
+                        health_report=health_report,
+                        emotion_report=emotion_report,
+                        prosodic_features=prosodic_dict,
+                        soundscape=soundscape,
+                        diary_entries=diary_entries,
+                        pet_id=pet_id
+                    )
+                except Exception as e:
+                    logger.warning(f"Wellbeing dashboard error: {e}")
+
+        # Stage 5: NLG Translation (now enriched with emotional and breed context)
+        primary_behavior = classification["behaviors"][0]
+        model_emotion_name = emotion_report.primary_emotion.state_name if emotion_report else None
+        display_emotion = self._select_translation_emotion(
+            primary_behavior["name"], model_emotion_name
+        )
+        breed_name = breed_report.top_predictions[0].breed_name if (breed_report and breed_report.top_predictions) else None
+        translation = await self._generate_translation(
+            species=species, classification=classification,
+            seq_context=seq_context, escalation=escalation,
+            emotion=model_emotion_name, breed=breed_name
+        )
 
         elapsed = time.time() - start_time
 
-        return {
+        # ── Build response ────────────────────────────────────
+        result = {
             **translation,
             "species": species,
+            "emotion": display_emotion,
             "species_emoji": SPECIES_GROUPS.get(species, {}).get("emoji", "🔊"),
             "behaviors": classification["behaviors"],
             "intensity": classification["intensity"],
             "urgency": classification["urgency"],
             "escalation_pattern": escalation,
             "processing_time_ms": int(elapsed * 1000),
-            "mel_spectrogram": generate_mel_spectrogram(clip).tolist()
+            "mel_spectrogram": generate_mel_spectrogram(clip).tolist(),
         }
+
+        # Anti-spoofing info
+        if spoof_result:
+            result["anti_spoofing"] = {
+                "is_human": spoof_result.is_human,
+                "human_probability": spoof_result.human_probability,
+                "confidence": spoof_result.confidence,
+            }
+
+        # Auto-detection info
+        if detection_result:
+            result["auto_detection"] = {
+                "soundscape": detection_result.soundscape,
+                "species_detections": detection_result.species_detections,
+                "num_individuals": detection_result.num_individuals,
+                "human_speech_removed": detection_result.human_speech_removed,
+                "routing_confident": detection_result.routing_confident,
+                "detector_mode": detection_result.detector_mode,
+            }
+
+        # Module 01: Health
+        if health_report:
+            result["health"] = {
+                "overall_status": health_report.overall_status,
+                "alerts": [
+                    {
+                        "flag_id": a.flag_id,
+                        "flag_name": a.flag_name,
+                        "severity": a.severity,
+                        "confidence": a.confidence,
+                        "veterinary_context": a.veterinary_context,
+                    }
+                    for a in health_report.alerts
+                ],
+                "respiratory_normal": health_report.respiratory_normal,
+                "vocal_pattern_change": health_report.vocal_pattern_change,
+                "baseline_established": health_report.baseline_established,
+                "disclaimer": MEDICAL_DISCLAIMER,
+            }
+
+        # Module 02: Breed
+        if breed_report and breed_report.top_predictions:
+            result["breed"] = {
+                "acoustic_group": breed_report.acoustic_group,
+                "acoustic_confidence": breed_report.acoustic_confidence,
+                "top_predictions": [
+                    {
+                        "breed": p.breed_name,
+                        "group": p.group_name,
+                        "confidence": p.confidence,
+                        "source": p.source,
+                    }
+                    for p in breed_report.top_predictions
+                ],
+                "fusion_method": breed_report.fusion_method,
+            }
+
+        # Module 03: Emotion
+        if emotion_report:
+            result["emotion_data"] = {
+                "primary": {
+                    "state_id": "behavior_aligned",
+                    "name": display_emotion,
+                    "confidence": primary_behavior["score"],
+                    "context": "Aligned with the primary vocal behaviour for this clip.",
+                },
+                "secondary": [],
+                "stress_level": emotion_report.stress_level,
+                "mood_stability": emotion_report.mood_stability,
+                "model_primary": {
+                    "state_id": emotion_report.primary_emotion.state_id,
+                    "name": emotion_report.primary_emotion.state_name,
+                    "confidence": emotion_report.primary_emotion.confidence,
+                },
+            }
+
+        # Module 04: Wellbeing
+        if wellbeing_report:
+            result["wellbeing"] = {
+                "composite_score": wellbeing_report.composite_score,
+                "composite_label": wellbeing_report.composite_label,
+                "trend": wellbeing_report.trend,
+                "dimensions": {
+                    k: {
+                        "name": v.name,
+                        "score": v.score,
+                        "weight": v.weight,
+                        "trend": v.trend,
+                    }
+                    for k, v in wellbeing_report.dimensions.items()
+                },
+                "recommendations": wellbeing_report.recommendations,
+            }
+
+        return result
+
+    async def translate_stream(self, audio_path: str = None,
+                               audio_bytes: bytes = None,
+                               audio_format: str = "wav",
+                               species: str = None,
+                               pet_id: str = None) -> AsyncGenerator[Dict, None]:
+        """
+        Streaming translation: yields word-by-word tokens for real-time display.
+
+        First yields metadata (anti-spoofing, detection, species).
+        Then yields individual translation tokens for karaoke display.
+        Finally yields enrichment module data (health, emotion, wellbeing).
+        """
+        start_time = time.time()
+        self.load_models()
+        self.load_modules()
+
+        # Preprocessing
+        if audio_path:
+            clips = preprocess_audio(audio_path)
+        elif audio_bytes:
+            clips = preprocess_audio_bytes(audio_bytes, format=audio_format)
+        else:
+            yield {"type": "error", "message": "No audio provided"}
+            return
+
+        if not clips:
+            yield {"type": "error", "message": "No audio content detected"}
+            return
+
+        # Select the clip with highest acoustic vocal energy (avoids silent pre-roll)
+        clip = max(clips, key=lambda c: float(np.sqrt(np.mean(c**2))))
+
+        # Anti-spoofing check
+        spoof_result = self.anti_spoof.check(clip, sr=AUDIO_CONFIG.sample_rate)
+        if spoof_result.is_human:
+            yield {
+                "type": "human_detected",
+                "message": "🚫 Human voice detected, not an animal!",
+                "human_probability": spoof_result.human_probability,
+                "rejection_reason": spoof_result.rejection_reason,
+            }
+            return
+
+        # Auto-detection
+        detection_result = None
+        if species is None:
+            detection_result = self.animal_detector.detect(clip)
+            if not detection_result.has_animal:
+                yield {"type": "no_animal", "message": "No animal vocalization detected."}
+                return
+            species = detection_result.species_detections[0]["species"] if detection_result.species_detections else "dogs"
+
+        species = species or "dogs"
+
+        # Yield metadata
+        yield {
+            "type": "metadata",
+            "species": species,
+            "emoji": SPECIES_GROUPS.get(species, {}).get("emoji", "🔊"),
+            "soundscape": detection_result.soundscape if detection_result else "unknown",
+        }
+
+        # Feature extraction + classification
+        audio_embed, cnn_features, prosodic_tensor = self._extract_features(clip)
+        prosodic_dict = self._get_prosodic_dict(clip)
+        classification = self._classify(
+            audio_embed, cnn_features, prosodic_tensor,
+            prosodic_dict=prosodic_dict, species=species, audio_clip=clip
+        )
+        seq_context, escalation = self._get_sequence_context(classification, species)
+
+        # Stream translation tokens
+        yield {"type": "translation_start"}
+
+        phrase_buffer = []
+        async for token in self._generate_translation_stream(
+            species, classification, seq_context, escalation
+        ):
+            yield {"type": "token", "content": token}
+
+            # Phrase buffering for TTS
+            phrase_buffer.append(token)
+            buffer_text = "".join(phrase_buffer)
+            words = buffer_text.split()
+
+            # Flush phrase when punctuation or max words reached
+            should_flush = (
+                len(words) >= STREAMING_CONFIG.phrase_buffer_max_words or
+                any(c in token for c in STREAMING_CONFIG.phrase_punctuation_triggers)
+            )
+            if should_flush and words:
+                yield {"type": "phrase", "text": buffer_text.strip()}
+                phrase_buffer = []
+
+        # Flush remaining buffer
+        if phrase_buffer:
+            yield {"type": "phrase", "text": "".join(phrase_buffer).strip()}
+
+        yield {"type": "translation_end"}
+
+        # Module enrichment
+        fused_embedding = classification["fused_embed"]
+
+        try:
+            health_report = self.health_monitor.assess(
+                audio=clip, fused_embedding=fused_embedding,
+                prosodic_features=prosodic_dict, species=species, pet_id=pet_id
+            )
+            yield {
+                "type": "health",
+                "overall_status": health_report.overall_status,
+                "alerts": [{"flag_id": a.flag_id, "flag_name": a.flag_name,
+                           "severity": a.severity} for a in health_report.alerts],
+                "disclaimer": MEDICAL_DISCLAIMER,
+            }
+        except Exception as e:
+            logger.warning(f"Health module error during stream: {e}")
+
+        try:
+            emotion_report = self.emotional_tracker.assess(
+                fused_embedding=fused_embedding,
+                prosodic_features=prosodic_dict,
+                species=species, pet_id=pet_id
+            )
+            yield {
+                "type": "emotion",
+                "primary": emotion_report.primary_emotion.state_name,
+                "confidence": emotion_report.primary_emotion.confidence,
+                "stress_level": emotion_report.stress_level,
+                "mood_stability": emotion_report.mood_stability,
+            }
+        except Exception as e:
+            logger.warning(f"Emotion module error during stream: {e}")
+
+        try:
+            wellbeing_report = self.wellbeing.assess(
+                health_report=health_report if 'health_report' in dir() else None,
+                emotion_report=emotion_report if 'emotion_report' in dir() else None,
+                prosodic_features=prosodic_dict,
+                pet_id=pet_id
+            )
+            yield {
+                "type": "wellbeing",
+                "composite_score": wellbeing_report.composite_score,
+                "composite_label": wellbeing_report.composite_label,
+                "recommendations": wellbeing_report.recommendations,
+            }
+        except Exception as e:
+            logger.warning(f"Wellbeing module error during stream: {e}")
+
+        elapsed = time.time() - start_time
+        yield {"type": "done", "processing_time_ms": int(elapsed * 1000)}
 
     def reset_session(self):
         """Clear call history for new session."""

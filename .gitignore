@@ -9,6 +9,8 @@ build/
 
 # Environment
 .env
+.env.*
+!.env.example
 venv/
 .venv/
 
@@ -16,11 +18,16 @@ venv/
 data/raw/
 data/processed/
 data/cache/
+data/shard_staging/
+data/diary/
+data/pet_profiles/
 *.wav
 *.mp3
 *.flac
 *.ogg
 *.npy
+*.npz
+*.webm
 
 # Model weights
 models/weights/
@@ -36,9 +43,23 @@ knowledge_base/chroma_db/
 # Experiment tracking
 wandb/
 
-# IDE
+# Logs
+*.log
+
+# Scratch / Temp
+scratch/
+
+# Frontend dependencies & build artifacts
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# IDE & Editor
 .vscode/
 .idea/
+.kiro/
+*.code-workspace
 *.swp
 *.swo
 
@@ -49,5 +70,6 @@ Thumbs.db
 # Jupyter
 .ipynb_checkpoints/
 
-# Gradio
+# Frontend runtime files
 flagged/
+
