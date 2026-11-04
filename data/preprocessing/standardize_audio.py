@@ -45,9 +45,34 @@ def load_and_standardize(
         audio, sr = librosa.load(file_path, sr=target_sr, mono=mono)
         logger.info(f"Loaded {file_path}: {len(audio)} samples @ {sr}Hz")
         return audio, sr
-    except Exception as e:
-        logger.error(f"Failed to load {file_path}: {e}")
-        raise
+    except Exception as initial_error:
+        # Fallback to ffmpeg conversion for WebM and formats unsupported by soundfile
+        import subprocess
+        import tempfile
+        import os
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_wav:
+                tmp_wav_path = tmp_wav.name
+            cmd = [
+                "ffmpeg", "-y", "-i", str(file_path),
+                "-ar", str(target_sr),
+                "-ac", "1" if mono else "2",
+                tmp_wav_path
+            ]
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if res.returncode == 0 and os.path.exists(tmp_wav_path):
+                audio, sr = librosa.load(tmp_wav_path, sr=target_sr, mono=mono)
+                try:
+                    os.unlink(tmp_wav_path)
+                except Exception:
+                    pass
+                logger.info(f"Loaded {file_path} via ffmpeg fallback: {len(audio)} samples @ {sr}Hz")
+                return audio, sr
+        except Exception as ffmpeg_err:
+            logger.debug(f"ffmpeg fallback failed: {ffmpeg_err}")
+
+        logger.error(f"Failed to load {file_path}: {initial_error}")
+        raise initial_error
 
 
 def normalize_amplitude(audio: np.ndarray) -> np.ndarray:
@@ -57,7 +82,10 @@ def normalize_amplitude(audio: np.ndarray) -> np.ndarray:
     Uses peak normalization to ensure consistent volume
     regardless of recording quality.
     """
-    peak = np.max(np.abs(audio))
+    rms = float(np.sqrt(np.mean(audio ** 2))) if len(audio) > 0 else 0.0
+    if rms < 0.022:
+        return audio
+    peak = float(np.max(np.abs(audio)))
     if peak > 0:
         audio = audio / peak
     return audio

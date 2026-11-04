@@ -1,0 +1,30 @@
+{
+  "name": "animalvox-ai",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "packageManager": "pnpm@11.25.0",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "dev:vite": "vite --host 0.0.0.0",
+    "build": "vite build --outDir dist/client && vite build --ssr src/entry-server.jsx --outDir dist/server",
+    "preview": "node server.js",
+    "check:emoji": "node ./scripts/check-emoji.mjs"
+  },
+  "dependencies": {
+    "framer-motion": "11.18.2",
+    "lucide-react": "0.468.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-router-dom": "6.28.1",
+    "zustand": "5.0.2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "4.3.4",
+    "autoprefixer": "10.4.20",
+    "postcss": "8.4.49",
+    "tailwindcss": "3.4.17",
+    "vite": "5.4.14"
+  }
+}

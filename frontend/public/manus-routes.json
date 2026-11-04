@@ -1,0 +1,14 @@
+{
+  "routes": [
+    { "path": "/", "title": "AnimalVox AI" },
+    { "path": "/landing", "title": "AnimalVox AI — Landing" },
+    { "path": "/app", "title": "AnimalVox AI — Translate" },
+    { "path": "/app/detect", "title": "AnimalVox AI — Detection" },
+    { "path": "/app/health", "title": "AnimalVox AI — Pet Health" },
+    { "path": "/app/breed", "title": "AnimalVox AI — Breed Identifier" },
+    { "path": "/app/emotions", "title": "AnimalVox AI — Emotion Timeline" },
+    { "path": "/app/history", "title": "AnimalVox AI — Translation History" },
+    { "path": "/app/settings", "title": "AnimalVox AI — Settings" },
+    { "path": "/app/:screen", "title": "AnimalVox AI — App Screen" }
+  ]
+}

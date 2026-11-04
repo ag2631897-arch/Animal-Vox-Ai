@@ -50,7 +50,7 @@ Every translation is grounded in **peer-reviewed ethology** (the science of anim
 - 🐦 **Multi-species support** — Birds, Dogs, Cats, Dolphins, Whales, Frogs
 - 📊 **Behavioral state detection** — 12 behavior classes with intensity + urgency scores
 - 🔗 **Sequential context** — understands call *series*, not just single calls
-- 🌐 **Web + Mobile** — Gradio app on HuggingFace Spaces + Capacitor Android/iOS
+- 🌐 **Web interface** — React/Vite frontend served by the FastAPI backend
 - 💸 **100% Free** — zero infrastructure cost, fully open source
 
 ---
@@ -252,10 +252,23 @@ python data/preprocessing/generate_spectrograms.py
 
 ### Run the App Locally
 
+AnimalVox uses the React frontend in `frontend/` as its primary interface. Build it once,
+then FastAPI serves both the API and the frontend from one process.
+
 ```bash
-python app/gradio_app.py
-# Open: http://localhost:7860
+# Terminal 1: build the React frontend
+cd frontend
+pnpm install
+pnpm run build
+
+# Terminal 2: start the API and primary web interface
+cd ..
+python -m uvicorn inference.api:app --host 0.0.0.0 --port 8000
+# Open: http://localhost:8000
 ```
+
+For frontend-only development, keep the API running on port 8000 and use `pnpm run dev`
+inside `frontend/`; Vite proxies `/api` requests to the backend.
 
 ---
 
@@ -301,8 +314,9 @@ animalvox-ai/
 │   └── api.py                     # FastAPI REST endpoint
 │
 ├── app/
-│   ├── gradio_app.py              # HuggingFace Spaces web UI
-│   └── mobile/                    # Capacitor wrapper (Android + iOS)
+│   ├── frontend/                    # Primary React/Vite web interface
+│   │   ├── src/                     # Screens, API client, components and state
+│   │   └── package.json             # Frontend scripts and dependencies
 │
 ├── evaluation/
 │   ├── benchmark.py               # Model evaluation scripts

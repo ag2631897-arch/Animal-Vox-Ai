@@ -1,0 +1,243 @@
+/* Application-only visual system. Landing styles intentionally remain untouched. */
+.app-shell {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --warning: var(--accent-3);
+  --danger: #ef4444;
+  position: relative;
+  isolation: isolate;
+  min-height: 100vh;
+  background: var(--bg);
+}
+
+.ambient-field { position: fixed; z-index: 0; inset: 0; pointer-events: none; opacity: .9; }
+.app-shell .app-main { position: relative; z-index: 1; }
+.app-shell, .app-shell button, .app-shell input, .app-shell select, .app-shell textarea { font-family: Inter, system-ui, sans-serif; }
+.app-shell .eyebrow { color: var(--text-muted); font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 500; letter-spacing: .12em; text-transform: uppercase; }
+.app-shell .primary-button, .app-shell .secondary-button, .app-shell .ghost-action, .app-shell .ghost-icon, .app-shell .text-button {
+  min-height: 40px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  transition: border-color .2s cubic-bezier(.2,0,0,1), background .2s cubic-bezier(.2,0,0,1), color .2s cubic-bezier(.2,0,0,1), transform .2s cubic-bezier(.2,0,0,1);
+}
+.app-shell .primary-button { padding: 0 var(--space-4); border: 1px solid var(--accent); border-radius: 12px; background: var(--accent); color: var(--bg); box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 20%, transparent); }
+.app-shell .primary-button:hover { transform: translateY(-1px); filter: brightness(1.05); }
+.app-shell .ghost-action, .app-shell .secondary-button { padding: 0 var(--space-3); border: 1px solid var(--border); border-radius: 12px; background: transparent; color: var(--text); }
+.app-shell .ghost-action:hover, .app-shell .secondary-button:hover { border-color: var(--border-hover); background: color-mix(in srgb, var(--accent) 7%, transparent); color: var(--text); }
+
+.app-shell .sidebar { z-index: 20; width: 72px; padding: var(--space-4) var(--space-2); border-right-color: var(--border); background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(16px); }
+.app-shell .sidebar-logo { width: 40px; height: 40px; margin-bottom: var(--space-6); }
+.app-shell .sidebar-nav { gap: var(--space-2); }
+.app-shell .nav-item { width: 40px; height: 40px; border-radius: 12px; }
+.app-shell .nav-item.active { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.app-shell .nav-item.active::before { left: -16px; width: 2px; height: 20px; border-radius: 2px; box-shadow: var(--accent-glow); }
+.app-shell .nav-tooltip { left: calc(100% + 16px); border-radius: 12px; }
+.app-shell .app-main { margin-left: 72px; background: transparent; }
+.app-shell .app-topbar { z-index: 10; height: 64px; min-height: 64px; padding: 0 var(--space-8); border-bottom-color: var(--border); background: color-mix(in srgb, var(--bg) 86%, transparent); }
+.app-shell .app-topbar h1 { margin: 0; color: var(--text); font-family: 'Instrument Serif', Georgia, serif; font-size: 32px; font-weight: 400; letter-spacing: 0; line-height: 1.2; }
+.app-shell .topbar-actions { gap: var(--space-3); }
+.app-shell .back-to-site { min-height: 40px; padding: 0 var(--space-3); border: 1px solid transparent; border-radius: 12px; color: var(--text-muted); font-size: 14px; }
+.app-shell .back-to-site:hover { border-color: var(--border); background: var(--surface); color: var(--text); }
+.app-shell .screen-content { width: min(100%, 1200px); min-height: calc(100vh - 64px); margin: 0 auto; padding: var(--space-8) var(--space-8) var(--space-16); }
+
+.pet-avatar { display: inline-grid; overflow: hidden; place-items: center; background: var(--surface-3); color: var(--accent); }
+.pet-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.app-shell .pet-avatar-small { width: 28px; height: 28px; border-radius: 50%; background: var(--surface-3); }
+.app-shell .pet-selector { min-height: 40px; gap: var(--space-2); padding: var(--space-1) var(--space-3) var(--space-1) var(--space-1); border-radius: 12px; background: var(--surface); }
+.app-shell .pet-dropdown { width: 256px; padding: var(--space-2); border-radius: 12px; background: var(--surface); }
+.app-shell .pet-option { gap: var(--space-3); padding: var(--space-2); border-radius: 8px; }
+.account-menu-wrap { position: relative; }
+.account-menu-trigger { display: inline-flex; min-height: 40px; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-2) var(--space-1) var(--space-1); border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); }
+.account-menu-trigger:hover { border-color: var(--border-hover); }
+.topbar-user-avatar { display: grid; width: 28px; height: 28px; overflow: hidden; place-items: center; border-radius: 50%; background: var(--surface-3); color: var(--accent); }
+.topbar-user-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.topbar-user-name { font-size: 14px; font-weight: 500; }
+.account-menu-scrim { position: fixed; z-index: 29; inset: 0; border: 0; background: transparent; }
+.account-menu { position: absolute; z-index: 30; top: calc(100% + var(--space-2)); right: 0; display: grid; width: 176px; padding: var(--space-2); border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: 0 16px 40px rgb(0 0 0 / .3); }
+.account-menu a, .account-menu button { display: flex; min-height: 40px; align-items: center; gap: var(--space-2); padding: 0 var(--space-2); border: 0; border-radius: 8px; background: transparent; color: var(--text); font-size: 14px; text-align: left; }
+.account-menu a:hover, .account-menu button:hover { background: var(--surface-3); }
+.account-menu button { color: var(--danger); }
+
+.app-shell .screen-intro { margin: 0 0 var(--space-12); }
+.app-shell .screen-intro p { margin: var(--space-2) 0 0; color: var(--text-muted); font-size: 14px; }
+.app-shell .local-badge, .app-shell .live-chip, .app-shell .source-count { min-height: 32px; padding: 0 var(--space-2); border-radius: 12px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; font-size: 12px; letter-spacing: .04em; }
+.app-shell .glass-card { border: 1px solid var(--border); border-radius: 20px; background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: 0 16px 40px rgb(0 0 0 / .16); backdrop-filter: blur(16px); }
+.app-shell .section-heading { margin-bottom: var(--space-6); }
+.app-shell .section-heading h2, .app-shell .settings-section-head h2 { margin: var(--space-1) 0 0; font-family: 'Instrument Serif', Georgia, serif; font-size: 28px; font-weight: 400; letter-spacing: 0; line-height: 1.2; }
+.app-shell .section-heading p { color: var(--text-muted); font-size: 14px; }
+.app-shell .empty-state { min-height: 280px; padding: var(--space-12) var(--space-6); border: 1px dashed var(--border); border-radius: 20px; background: color-mix(in srgb, var(--surface) 72%, transparent); }
+.app-shell .empty-state strong { margin-top: var(--space-4); font-family: 'Instrument Serif', Georgia, serif; font-size: 28px; font-weight: 400; }
+.app-shell .empty-state p { max-width: 440px; color: var(--text-muted); font-size: 14px; }
+
+/* Translate and Quick Translate */
+.app-shell .record-screen { min-height: 0; }
+.app-shell .record-layout { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); align-items: stretch; gap: var(--space-6); max-width: none; margin: 0; }
+.app-shell .record-instrument, .app-shell .result-column { min-height: 520px; }
+.app-shell .record-instrument { justify-content: center; padding: var(--space-8); border: 1px solid var(--border); border-radius: 20px; background: color-mix(in srgb, var(--surface) 80%, transparent); }
+.app-shell .record-instrument .record-label { top: var(--space-6); font-size: 12px; }
+.app-shell .record-control { width: 240px; height: 240px; }
+.app-shell .record-button { width: 96px; height: 96px; border-color: color-mix(in srgb, var(--accent) 55%, white); background: var(--accent); color: var(--bg); }
+.app-shell .listen-status { margin-top: var(--space-3); color: var(--text-muted); font-size: 14px; }
+.app-shell .audio-dropzone { width: min(100%, 360px); margin: var(--space-6) 0 var(--space-3); border-color: var(--border); background: transparent; }
+.app-shell .dropzone-cta { padding: var(--space-4); }
+.app-shell .dropzone-main { color: var(--text); font-size: 14px; }
+.app-shell .dropzone-sub { color: var(--text-muted); font-size: 12px; }
+.app-shell .auto-species-toggle { display: grid; width: min(100%, 360px); grid-template-columns: 20px minmax(0, 1fr) auto; column-gap: var(--space-3); row-gap: var(--space-2); align-items: center; margin-top: var(--space-2); padding: var(--space-4); border: 1px solid var(--border); border-radius: 12px; background: color-mix(in srgb, var(--surface-2) 80%, transparent); }
+.app-shell .ast-left { display: contents; }
+.app-shell .ast-left > svg { grid-column: 1; color: var(--accent); }
+.app-shell .ast-text { display: contents; }
+.app-shell .ast-label { grid-column: 2; color: var(--text); font-size: 14px; font-weight: 500; }
+.app-shell .ast-status { grid-column: 1 / -1; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
+.app-shell .toggle-switch { grid-column: 3; grid-row: 1; width: 40px; height: 24px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-3); }
+.app-shell .toggle-knob { width: 16px; height: 16px; }
+.app-shell .inline-note { max-width: 360px; margin-top: var(--space-2); color: var(--text-muted); font-size: 12px; text-align: left; }
+.app-shell .error-note { color: var(--danger) !important; }
+.app-shell .human-removed-pill { display: inline-flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-4); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: 12px; background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--text-muted); font-size: 12px; }
+.app-shell .quick-translate-badge { min-height: 32px; margin: 0 0 var(--space-6); padding: 0 var(--space-3); border-radius: 12px; background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--text-muted); font-size: 12px; letter-spacing: 0; text-transform: none; }
+.app-shell .result-column { display: flex; }
+.app-shell .result-card { width: 100%; padding: var(--space-8); border-color: var(--border); border-radius: 20px; background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: none; }
+.app-shell .result-owner { gap: var(--space-1); margin-bottom: var(--space-6); }
+.app-shell .result-owner > span { display: flex; align-items: center; gap: var(--space-2); color: var(--text); font-family: Inter, system-ui, sans-serif; font-size: 14px; font-style: normal; font-weight: 600; }
+.app-shell .result-owner small { color: var(--text-muted); font-size: 12px; }
+.app-shell .translation-name { margin-bottom: var(--space-2); color: var(--text-muted); font-family: Inter, system-ui, sans-serif; font-size: 12px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; }
+.app-shell .translation-copy { margin-bottom: var(--space-6); font-size: 28px; line-height: 1.35; }
+.app-shell .metric-grid { gap: var(--space-3); }
+.app-shell .metric-item { padding: var(--space-3); border-radius: 12px; background: var(--surface-2); }
+.app-shell .screen-footnote { margin-top: var(--space-12); color: var(--text-muted); }
+
+/* Detection and data screens */
+.app-shell .detection-screen, .app-shell .health-screen, .app-shell .breed-screen, .app-shell .emotion-screen, .app-shell .history-screen, .app-shell .settings-screen { max-width: none; margin: 0; }
+.app-shell .detection-layout { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); align-items: stretch; gap: var(--space-6); }
+.app-shell .radar-panel, .app-shell .detection-results { min-height: 480px; border-radius: 20px; }
+.app-shell .radar-panel { padding: var(--space-8); border: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 85%, transparent); }
+.app-shell .detection-results { padding: var(--space-8); border: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 85%, transparent); }
+.app-shell .detection-list { gap: 0; }
+.app-shell .detection-card { min-height: 0; gap: var(--space-3); padding: var(--space-4) 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; box-shadow: none; }
+.app-shell .detection-avatar, .app-shell .history-animal { width: 40px; height: 40px; border-radius: 12px; background: var(--surface-3); color: var(--accent); }
+.app-shell .detection-card-content strong { font-size: 16px; font-weight: 600; }
+.app-shell .detection-card-content p { margin: var(--space-1) 0 var(--space-2); color: var(--text-muted); font-family: Inter, system-ui, sans-serif; font-size: 14px; }
+.app-shell .detection-confidence { font-size: 16px; }
+.app-shell .retro-status { display: none; }
+
+.app-shell .health-overview { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: var(--space-6); }
+.app-shell .gauge-panel, .app-shell .health-dimensions, .app-shell .health-bottom { min-height: 0; }
+.app-shell .health-dimensions { gap: var(--space-3); }
+.app-shell .dimension-card { min-height: 160px; padding: var(--space-6); }
+.app-shell .health-bottom { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: var(--space-6); margin-top: var(--space-6); }
+.app-shell .flags-panel, .app-shell .activity-panel, .app-shell .emotion-distribution, .app-shell .notable-section { padding: var(--space-6); border: 1px solid var(--border); border-radius: 20px; background: color-mix(in srgb, var(--surface) 85%, transparent); }
+.app-shell .breed-result-card { padding: var(--space-8); }
+.app-shell .breed-winner h2 { font-size: 40px; }
+.app-shell .emotion-distribution { padding-bottom: var(--space-6); }
+.app-shell .notable-section { margin-top: var(--space-6); }
+
+/* History */
+.app-shell .history-toolbar { gap: var(--space-3); margin-bottom: var(--space-3); }
+.app-shell .history-search, .app-shell .history-filter { min-height: 40px; border-radius: 12px; font-size: 14px; }
+.app-shell .history-demo-note { margin: 0 0 var(--space-6); color: var(--text-muted); font-size: 12px; }
+.app-shell .history-group { margin-bottom: var(--space-8); }
+.app-shell .history-date { position: sticky; z-index: 2; top: 64px; margin: 0; padding: var(--space-2) 0; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+.app-shell .history-item { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: var(--space-3); padding: var(--space-4) 0; }
+.app-shell .history-copy > p { margin: var(--space-2) 0; color: var(--text); font-size: 20px; }
+.app-shell .history-meta { font-size: 12px; }
+.app-shell .history-meta strong { font-size: 14px; }
+.app-shell .history-actions { grid-column: 2; }
+.app-shell .history-confidence { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+.app-shell .history-actions .confidence-track { width: 120px; }
+.app-shell .history-time { color: var(--text-muted); font-family: 'JetBrains Mono', monospace; font-size: 12px; white-space: nowrap; }
+
+/* Settings */
+.app-shell .settings-tabs { gap: var(--space-6); }
+.app-shell .settings-tabs button { min-height: 40px; padding: 0 var(--space-1) var(--space-3); font-size: 14px; }
+.app-shell .settings-panel { padding-top: var(--space-8); }
+.app-shell .settings-section-head { margin-bottom: var(--space-6); }
+.app-shell .form-grid { gap: var(--space-4); }
+.app-shell .form-grid label, .app-shell .account-form label { gap: var(--space-2); color: var(--text-muted); font-size: 12px; }
+.app-shell .form-grid input, .app-shell .form-grid select, .app-shell .account-form input { min-height: 40px; border-radius: 12px; color: var(--text); font-size: 14px; }
+.app-shell .pet-profile-avatar { width: 48px; height: 48px; border-radius: 12px; background: var(--surface-3); }
+.app-shell .color-controls { gap: var(--space-2); }
+.app-shell .color-row { min-height: 48px; border-radius: 12px; }
+.app-shell .color-hex { min-width: 96px; color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+.app-shell .theme-preview { min-height: 220px; padding: var(--space-6); border-radius: 20px; }
+.app-shell .voice-options { gap: var(--space-2); }
+.app-shell .voice-option { min-height: 48px; border-radius: 12px; }
+.app-shell .speed-control { gap: var(--space-3); }
+.app-shell .speed-ticks { display: flex; grid-column: 1 / -1; justify-content: space-between; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+
+/* Dialogs use their own namespace so result-card styles cannot affect them. */
+.signal-dialog-backdrop { position: fixed; z-index: 200; inset: 0; display: flex; align-items: center; justify-content: center; padding: var(--space-4); overflow: auto; background: rgb(3 9 6 / .72); backdrop-filter: blur(12px); }
+.signal-dialog { position: relative; display: block; width: min(480px, calc(100vw - 32px)); max-width: 480px; max-height: calc(100vh - 32px); flex: 0 1 480px; overflow: auto; padding: var(--space-8); border: 1px solid var(--border); border-radius: 20px; background: var(--surface); color: var(--text); box-shadow: 0 24px 64px rgb(0 0 0 / .4); text-align: left; }
+.signal-dialog[data-tone='warning'] { --dialog-tone: var(--warning); }
+.signal-dialog[data-tone='danger'] { --dialog-tone: var(--danger); }
+.signal-dialog[data-tone='neutral'] { --dialog-tone: var(--accent); }
+.signal-dialog-close { position: absolute; top: var(--space-4); right: var(--space-4); display: grid; width: 40px; height: 40px; padding: 0; place-items: center; border: 1px solid var(--border); border-radius: 12px; background: transparent; color: var(--text-muted); }
+.signal-dialog-close:hover { border-color: var(--border-hover); background: var(--surface-2); color: var(--text); }
+.signal-dialog-icon { display: grid; width: 40px; height: 40px; margin: 0 0 var(--space-4); place-items: center; border: 1px solid color-mix(in srgb, var(--dialog-tone) 40%, transparent); border-radius: 12px; background: color-mix(in srgb, var(--dialog-tone) 12%, transparent); color: var(--dialog-tone); }
+.signal-dialog h2 { margin: 0 0 var(--space-2); color: var(--text); font-family: 'Instrument Serif', Georgia, serif; font-size: 28px; font-weight: 400; line-height: 1.2; }
+.signal-dialog-subtitle { margin: 0 0 var(--space-3); color: var(--text); font-size: 16px; line-height: 1.5; }
+.signal-dialog-description { margin: 0 0 var(--space-6); color: var(--text-muted); font-size: 14px; line-height: 1.5; }
+.signal-dialog-tips { margin: 0 0 var(--space-6); padding: var(--space-4); border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+.signal-dialog-tips h3 { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-3); color: var(--dialog-tone); font-size: 14px; font-weight: 600; }
+.signal-dialog-tips ul { display: grid; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+.signal-dialog-tips li { position: relative; padding-left: var(--space-4); color: var(--text-muted); font-size: 14px; line-height: 1.5; }
+.signal-dialog-tips li::before { position: absolute; top: 9px; left: 0; width: 4px; height: 4px; border-radius: 50%; background: var(--dialog-tone); content: ''; }
+.signal-dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-3); }
+.signal-dialog-retry { box-shadow: none !important; }
+.signal-dialog-dismiss { min-width: 72px; }
+
+@media (max-width: 900px) {
+  .app-shell .app-topbar, .app-shell .screen-content { padding-right: var(--space-6); padding-left: var(--space-6); }
+  .app-shell .record-layout, .app-shell .detection-layout, .app-shell .health-overview, .app-shell .health-bottom { grid-template-columns: 1fr; }
+  .app-shell .record-instrument, .app-shell .result-column, .app-shell .radar-panel, .app-shell .detection-results { min-height: 0; }
+}
+
+@media (min-width: 1024px) {
+  .app-shell .account-panel { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: var(--space-12); align-items: start; }
+  .app-shell .account-profile, .app-shell .voice-section { grid-column: 1; }
+  .app-shell .theme-section { position: sticky; top: 96px; grid-column: 2; grid-row: 1 / span 2; }
+}
+
+@media (max-width: 767px) {
+  .app-shell .sidebar { display: none; }
+  .app-shell .app-main { margin-left: 0; padding-bottom: 64px; }
+  .app-shell .mobile-tabs { z-index: 20; }
+  .app-shell .app-topbar { gap: var(--space-2); padding: 0 var(--space-4); }
+  .app-shell .app-topbar h1 { font-size: 28px; }
+  .app-shell .screen-content { padding: var(--space-6) var(--space-4) var(--space-12); }
+  .topbar-user-name, .app-shell .back-to-site { display: none; }
+  .app-shell .record-instrument, .app-shell .result-card, .app-shell .detection-results, .app-shell .radar-panel, .app-shell .breed-result-card { padding: var(--space-6); }
+  .app-shell .record-control { width: 200px; height: 200px; }
+  .app-shell .record-button { width: 80px; height: 80px; }
+  .app-shell .history-item { grid-template-columns: 40px minmax(0, 1fr); }
+  .app-shell .history-time { grid-column: 2; }
+  .app-shell .history-copy > p { font-size: 20px; }
+  .app-shell .history-actions { flex-wrap: wrap; }
+  .signal-dialog { width: min(480px, calc(100vw - 32px)); padding: var(--space-6); }
+  .signal-dialog-actions { justify-content: stretch; }
+  .signal-dialog-actions > button { flex: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell *, .app-shell *::before, .app-shell *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
+}
+
+/* Supersedes the legacy compact-scale overrides loaded before this file. */
+#root .app-shell .eyebrow, #root .app-shell .record-instrument .record-label { font-size: 12px !important; }
+#root .app-shell .app-topbar h1 { font-size: 32px !important; }
+#root .app-shell .section-heading h2, #root .app-shell .settings-section-head h2 { font-size: 28px !important; }
+#root .app-shell .empty-state strong, #root .app-shell .breed-winner h2 { font-size: 28px !important; }
+#root .app-shell .breed-winner h2 { font-size: 40px !important; }
+#root .app-shell .translation-copy { font-size: 28px !important; }
+#root .app-shell .translation-name { font-size: 12px !important; }
+#root .app-shell .record-time, #root .app-shell .metric-item > span, #root .app-shell .screen-footnote, #root .app-shell .history-date, #root .app-shell .history-meta, #root .app-shell .history-confidence, #root .app-shell .history-demo-note, #root .app-shell .form-grid label, #root .app-shell .account-form label, #root .app-shell .color-row, #root .app-shell .color-hex, #root .app-shell .speed-control { font-size: 12px !important; }
+#root .app-shell .screen-intro p, #root .app-shell .section-heading p, #root .app-shell .empty-state p, #root .app-shell .detection-card-content p, #root .app-shell .listen-status, #root .app-shell .dropzone-main, #root .app-shell .history-meta strong, #root .app-shell .topbar-user-name, #root .app-shell .account-menu a, #root .app-shell .account-menu button { font-size: 14px !important; }
+#root .app-shell .dropzone-sub, #root .app-shell .inline-note, #root .app-shell .result-owner small, #root .app-shell .human-removed-pill, #root .app-shell .history-time { font-size: 12px !important; }
+#root .app-shell .detection-card-content strong { font-size: 16px !important; }
+#root .app-shell .history-copy > p { font-size: 20px !important; }
+@media (max-width: 767px) { #root .app-shell .app-topbar h1 { font-size: 28px !important; } }

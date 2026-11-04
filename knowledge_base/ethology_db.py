@@ -13,8 +13,24 @@ logger = logging.getLogger(__name__)
 
 # Try ChromaDB, fall back to in-memory search
 try:
+    import hashlib
+    import numpy as np
     import chromadb
-    from chromadb.config import Settings
+    from chromadb import EmbeddingFunction, Documents, Embeddings
+
+    class DeterministicEmbeddingFunction(EmbeddingFunction[Documents]):
+        def name(self) -> str:
+            return "deterministic_embedding_function"
+
+        def __call__(self, input: Documents) -> Embeddings:
+            embeddings = []
+            for text in input:
+                raw = hashlib.sha256(text.encode("utf-8")).digest()
+                vec = np.frombuffer(raw, dtype=np.uint8).astype(np.float32)
+                norm = np.linalg.norm(vec)
+                embeddings.append((vec / (norm if norm > 0 else 1.0)).tolist())
+            return embeddings
+
     HAS_CHROMADB = True
 except ImportError:
     HAS_CHROMADB = False
@@ -29,20 +45,28 @@ class EthologyKnowledgeBase:
 
     def __init__(self, db_path: str = None, use_chroma: bool = True):
         self.entries: List[Dict] = []
+        self.use_chroma = False
 
         if use_chroma and HAS_CHROMADB:
-            db_path = db_path or str(Path(__file__).parent / "chroma_db")
-            self.client = chromadb.Client(Settings(
-                chroma_db_impl="duckdb+parquet",
-                persist_directory=db_path,
-                anonymized_telemetry=False
-            ))
-            self.collection = self.client.get_or_create_collection(
-                name="ethology_kb",
-                metadata={"description": "Animal behavior ethology entries"}
-            )
-            self.use_chroma = True
-            logger.info(f"ChromaDB initialized at {db_path}")
+            try:
+                db_path = db_path or str(Path(__file__).parent / "chroma_db")
+                if hasattr(chromadb, "PersistentClient"):
+                    self.client = chromadb.PersistentClient(path=db_path)
+                else:
+                    self.client = chromadb.Client()
+
+                # Use deterministic embedding function if onnxruntime is not available
+                ef = DeterministicEmbeddingFunction()
+                self.collection = self.client.get_or_create_collection(
+                    name="ethology_kb",
+                    embedding_function=ef,
+                    metadata={"description": "Animal behavior ethology entries"}
+                )
+                self.use_chroma = True
+                logger.info(f"ChromaDB initialized at {db_path}")
+            except Exception as e:
+                logger.warning(f"ChromaDB initialization failed ({e}), falling back to in-memory: {e}")
+                self.use_chroma = False
         else:
             self.use_chroma = False
             logger.info("Using in-memory knowledge base")
