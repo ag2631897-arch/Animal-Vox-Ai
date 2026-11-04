@@ -106,27 +106,36 @@ class VADFilter:
 
             formants = fa.extract_formants(seg, sr=sr)
             f2 = float(formants[1]) if len(formants) > 1 else 0.0
+            vtl, disp = fa.estimate_vocal_tract_length(formants)
+            f1 = float(formants[0]) if len(formants) > 0 else 0.0
+            has_human_f = (200 <= f1 <= 950) and (750 <= f2 <= 2750)
+            has_human_geom = (11.5 <= vtl <= 22.0) or (750 <= disp <= 1650)
 
-            # Human conversational speech: modal adult F0 70-270 Hz, speech centroid, tonality
-            is_human_speech = (70 <= med_f0 <= 270) and (350 <= sc <= 2600) and (hnr >= 9.0)
+            # Human voice frame:
+            # 1. Normal speech: modal F0 70-280 Hz with speech centroid and harmonicity
+            # 2. Human falsetto / imitation: F0 200-750 Hz with human vocal tract length / formants and high tonality
+            is_human_frame = (
+                ((70 <= med_f0 <= 280) and (350 <= sc <= 2600) and (hnr >= 8.0)) or
+                ((200 <= med_f0 <= 750) and (hnr >= 10.0 or sf < 0.03) and (has_human_geom or has_human_f))
+            )
 
             # Animal call:
             # - Canine bark: explosive onset with high canine pitch (med_f0 >= 280) or chaotic turbulent airflow
             is_canine_bark = (
-                rms >= 0.025 and (
-                    (med_f0 >= 280 and sc >= 700) or
+                rms >= 0.025 and not is_human_frame and (
+                    (med_f0 >= 280 and sc >= 700 and not has_human_geom) or
                     (med_f0 < 70 and sc >= 750 and zcr >= 0.04) or
                     (f2 >= 1620 and hnr < 10.0 and zcr >= 0.04)
-                ) and not is_human_speech
+                )
             )
-            is_high_pitch_animal = (med_f0 >= 280 and rms >= 0.020 and not is_human_speech)
-            is_avian = (sc >= 2200 and rms >= 0.020 and (med_f0 == 0 or med_f0 >= 800))
-            is_infrasonic = (20 <= med_f0 <= 70 and rms >= 0.015 and not is_human_speech)
-            is_frog = (140 <= med_f0 <= 650 and sc < 1800 and f2 >= 1650 and not is_human_speech)
+            is_high_pitch_animal = (med_f0 >= 300 and rms >= 0.020 and not is_human_frame and not has_human_geom)
+            is_avian = (sc >= 2200 and rms >= 0.020 and (med_f0 == 0 or med_f0 >= 800) and not is_human_frame)
+            is_infrasonic = (20 <= med_f0 <= 70 and rms >= 0.015 and not is_human_frame)
+            is_frog = (140 <= med_f0 <= 650 and sc < 1800 and f2 >= 1650 and not is_human_frame and not has_human_geom)
 
             is_animal_call = bool(is_canine_bark or is_high_pitch_animal or is_avian or is_infrasonic or is_frog)
 
-            frame_human[i] = is_human_speech and not is_animal_call
+            frame_human[i] = is_human_frame and not is_animal_call
             frame_animal[i] = is_animal_call
 
         # Genuine mixed audio must have animal vocalization frames and genuine human speech frames
@@ -496,21 +505,33 @@ class AnimalDetectionPipeline:
         scores = np.zeros(6)  # ['birds', 'dogs', 'cats', 'dolphins', 'whales', 'frogs']
         dur_s = len(analysis_audio) / sr
 
-        # 2. Dogs: Barks (bursty duration < 1.4s, centroid 600-2400 Hz, F0 75-1250 Hz for all dog breeds and yelps), whines (350-1200 Hz), howls (200-550 Hz)
-        is_dog_bark = (dur_s < 1.4 and 600 <= mean_cent <= 2400 and (med_f0 == 0 or (75 <= med_f0 <= 1250)))
-        is_dog_whine = (350 <= med_f0 <= 1200 and 650 <= mean_cent <= 2400 and rms >= 0.02)
-        is_dog_howl = (dur_s >= 1.2 and 180 <= med_f0 <= 500 and hnr_db >= 10.0 and mean_cent <= 2200)
-
-        # 1. Cats: Characteristic FM sweep meow (pitch modulation > 70 Hz, duration >= 0.6s), high feline pitch (400 - 1100 Hz), or purr (20-70 Hz)
+        # 1. Cats: Characteristic FM sweep meow (pitch modulation >= 20 Hz, feline pitch 320-1100 Hz, tonal HNR >= 8 dB), or purr (20-70 Hz)
         is_cat_purr = (
             20 <= med_f0 <= 70 and dur_s >= 0.8 and rms > 0.020 and hnr_db >= 6.0 and
             mean_cent >= 350.0 and (filename_hint == 'cats' or (p75_f0 - p25_f0 >= 10.0))
         )
-        is_cat_meow = (dur_s >= 0.6 and high_f0_ratio >= 0.25 and (380 <= med_f0 <= 1100) and hnr_db >= 7.0 and (p75_f0 - p25_f0 > 60.0) and not is_dog_bark)
+        is_cat_meow = (
+            (320 <= med_f0 <= 1100) and
+            (hnr_db >= 16.0 or (hnr_db >= 7.0 and (p75_f0 - p25_f0 >= 25.0))) and
+            (p75_f0 - p25_f0 >= 20.0 or high_f0_ratio >= 0.25) and
+            mean_cent <= 2600
+        )
         if is_cat_meow or is_cat_purr:
             scores[2] = 4.8
-        elif dur_s >= 0.6 and 400 <= med_f0 <= 1000 and (p75_f0 - p25_f0 > 50.0) and hnr_db >= 6.5 and not is_dog_bark:
-            scores[2] = 3.9
+        elif dur_s >= 0.5 and 350 <= med_f0 <= 1000 and (p75_f0 - p25_f0 > 30.0) and hnr_db >= 6.5:
+            scores[2] = 4.0
+
+        # 2. Dogs: Barks (bursty duration < 0.65s or rough phonation / low F0), whines (350-1200 Hz), howls (200-550 Hz)
+        is_dog_bark = (
+            not is_cat_meow and
+            (
+                (dur_s < 0.65 and 600 <= mean_cent <= 2400 and (med_f0 == 0 or 75 <= med_f0 <= 1250) and hnr_db < 28.0) or
+                (75 <= med_f0 <= 320 and mean_cent <= 2400 and dur_s < 1.4) or
+                (med_f0 > 350 and hnr_db < 22.0 and dur_s < 0.8)
+            )
+        )
+        is_dog_whine = (not is_cat_meow and 350 <= med_f0 <= 1200 and 650 <= mean_cent <= 2400 and rms >= 0.02 and (p75_f0 - p25_f0 < 25.0))
+        is_dog_howl = (dur_s >= 1.2 and 180 <= med_f0 <= 500 and hnr_db >= 10.0 and mean_cent <= 2200 and not is_cat_meow)
 
         if is_dog_bark:
             scores[1] = 4.8
@@ -518,17 +539,17 @@ class AnimalDetectionPipeline:
             scores[1] = 4.5
         elif is_dog_howl:
             scores[1] = 4.5
-        elif 80 <= med_f0 <= 550 and mean_cent <= 2400:
+        elif not is_cat_meow and 80 <= med_f0 <= 320 and mean_cent <= 2400:
             scores[1] = 4.0
 
         # 3. Birds: True avian vocalizations have high syrinx pitch (> 850 Hz), high centroid (> 2100 Hz), and high tonality
-        # Must NOT be triggered by dog barks
+        # Must NOT be triggered by dog barks or cat meows
         is_bird_song_or_call = (
-            mean_cent > 2100 and (est_f0 > 850 or mean_cent > 2700) and not is_dog_bark
+            mean_cent > 2100 and (est_f0 > 850 or mean_cent > 2700) and not is_dog_bark and not is_cat_meow
         )
         if is_bird_song_or_call:
             scores[0] = 4.8
-        elif est_f0 > 850 and mean_cent > 2200 and hnr_db >= 6.0 and not is_dog_bark:
+        elif est_f0 > 850 and mean_cent > 2200 and hnr_db >= 6.0 and not is_dog_bark and not is_cat_meow:
             scores[0] = 3.9
 
         # 4. Dolphins: High frequency ultrasonic click trains (> 3500 Hz) or very high whistles (> 2500 Hz)
