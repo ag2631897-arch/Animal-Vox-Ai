@@ -3,12 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowRight, PawPrint, Sparkles } from 'lucide-react'
 import { useAppStore } from '../../store/useAppStore'
 
-const speciesOptions = [
-  { key: 'Dog', emoji: '🐕' },
-  { key: 'Cat', emoji: '🐈' },
-  { key: 'Bird', emoji: '🐦' },
-  { key: 'Other', emoji: '🐾' },
-]
+const speciesOptions = [{ key: 'Dog' }, { key: 'Cat' }, { key: 'Bird' }, { key: 'Other' }]
 
 export default function FirstTimePetPopup() {
   const hasCompleted = useAppStore((s) => s.hasCompletedOnboarding)
@@ -24,10 +19,9 @@ export default function FirstTimePetPopup() {
   if (hasCompleted) return null
 
   const handleCreate = () => {
-    if (!name.trim()) return
+    if (name.trim().length < 2) return
     const id = `${name.trim().toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`
-    const emoji = speciesOptions.find((o) => o.key === species)?.emoji || '🐾'
-    savePet({ id, name: name.trim(), species, breed, age: '', gender: 'Unknown', emoji })
+    savePet({ id, name: name.trim(), species, breed, age: '', gender: 'Unknown', emoji: '' })
     setActivePet(id)
     setOnboarded()
   }
@@ -108,7 +102,7 @@ export default function FirstTimePetPopup() {
                         className={`species-chip ${species === opt.key ? 'active' : ''}`}
                         onClick={() => setSpecies(opt.key)}
                       >
-                        {opt.emoji} {opt.key}
+                        {opt.key}
                       </button>
                     ))}
                   </div>
@@ -127,7 +121,7 @@ export default function FirstTimePetPopup() {
                 <button
                   className="primary-button"
                   onClick={handleCreate}
-                  disabled={!name.trim()}
+                  disabled={name.trim().length < 2}
                 >
                   Create Profile <ArrowRight size={16} />
                 </button>

@@ -16,8 +16,19 @@ export const useAppStore = create(persist((set, get) => ({
   /* ── Auth ── */
   isAuthenticated: false,
   authUser: null,
-  login: (user) => set({ isAuthenticated: true, authUser: user }),
-  logout: () => set({ isAuthenticated: false, authUser: null }),
+  authToken: null,
+  mustCompletePetProfile: false,
+  setMustCompletePetProfile: (mustCompletePetProfile) => set({ mustCompletePetProfile }),
+  login: (user, token, isNewUser = false) => {
+    const isNew = Boolean(isNewUser || user?.is_new_user || get().pets.length === 0)
+    set({
+      isAuthenticated: true,
+      authUser: user,
+      authToken: token || null,
+      mustCompletePetProfile: isNew,
+    })
+  },
+  logout: () => set({ isAuthenticated: false, authUser: null, authToken: null, mustCompletePetProfile: false }),
 
   /* ── Onboarding ── */
   hasCompletedOnboarding: false,
@@ -73,6 +84,8 @@ export const useAppStore = create(persist((set, get) => ({
   partialize: (state) => ({
     isAuthenticated: state.isAuthenticated,
     authUser: state.authUser,
+    authToken: state.authToken,
+    mustCompletePetProfile: state.mustCompletePetProfile,
     hasCompletedOnboarding: state.hasCompletedOnboarding,
     autoSpeciesDetection: state.autoSpeciesDetection,
     pets: state.pets,

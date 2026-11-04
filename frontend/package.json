@@ -5,9 +5,12 @@
   "type": "module",
   "packageManager": "pnpm@11.25.0",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
-    "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0"
+    "start": "node server.js",
+    "dev": "node server.js",
+    "dev:vite": "vite --host 0.0.0.0",
+    "build": "vite build --outDir dist/client && vite build --ssr src/entry-server.jsx --outDir dist/server",
+    "preview": "node server.js",
+    "check:emoji": "node ./scripts/check-emoji.mjs"
   },
   "dependencies": {
     "framer-motion": "11.18.2",

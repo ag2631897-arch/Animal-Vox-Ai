@@ -82,7 +82,10 @@ def normalize_amplitude(audio: np.ndarray) -> np.ndarray:
     Uses peak normalization to ensure consistent volume
     regardless of recording quality.
     """
-    peak = np.max(np.abs(audio))
+    rms = float(np.sqrt(np.mean(audio ** 2))) if len(audio) > 0 else 0.0
+    if rms < 0.022:
+        return audio
+    peak = float(np.max(np.abs(audio)))
     if peak > 0:
         audio = audio / peak
     return audio

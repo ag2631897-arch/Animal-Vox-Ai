@@ -45,6 +45,34 @@ class BreedReport:
     species: str
 
 
+DEFAULT_VISUAL_BREEDS = [
+    "Chihuahua", "Japanese Spaniel", "Maltese Dog", "Pekingese", "Shih-Tzu",
+    "Blenheim Spaniel", "Papillon", "Toy Terrier", "Rhodesian Ridgeback", "Afghan Hound",
+    "Basset Hound", "Beagle", "Bloodhound", "Bluetick Coonhound", "Black-and-tan Coonhound",
+    "Walker Hound", "English Foxhound", "Redbone Coonhound", "Borzoi", "Irish Wolfhound",
+    "Italian Greyhound", "Whippet", "Ibizan Hound", "Norwegian Elkhound", "Otterhound",
+    "Saluki", "Scottish Deerhound", "Weimaraner", "Staffordshire Bullterrier", "American Staffordshire Terrier",
+    "Bedlington Terrier", "Border Terrier", "Kerry Blue Terrier", "Irish Terrier", "Norfolk Terrier",
+    "Norwich Terrier", "Yorkshire Terrier", "Wire-haired Fox Terrier", "Lakeland Terrier", "Sealyham Terrier",
+    "Airedale Terrier", "Cairn Terrier", "Australian Terrier", "Dandie Dinmont Terrier", "Boston Bull",
+    "Miniature Schnauzer", "Giant Schnauzer", "Standard Schnauzer", "Scotch Terrier", "Tibetan Terrier",
+    "Silky Terrier", "Soft-coated Wheaten Terrier", "West Highland White Terrier", "Lhasa Apso", "Flat-coated Retriever",
+    "Curly-coated Retriever", "Golden Retriever", "Labrador Retriever", "Chesapeake Bay Retriever", "German Shorthaired Pointer",
+    "Vizsla", "English Setter", "Irish Setter", "Gordon Setter", "Brittany Spaniel",
+    "Clumber Spaniel", "English Springer Spaniel", "Welsh Springer Spaniel", "Cocker Spaniel", "Sussex Spaniel",
+    "Irish Water Spaniel", "Kuvasz", "Schipperke", "Groenendael", "Malinois",
+    "Briard", "Australian Kelpie", "Komondor", "Old English Sheepdog", "Shetland Sheepdog",
+    "Collie", "Border Collie", "Bouvier des Flandres", "Rottweiler", "German Shepherd",
+    "Doberman Pinscher", "Miniature Pinscher", "Greater Swiss Mountain Dog", "Bernese Mountain Dog", "Appenzeller Sennenhund",
+    "Entlebucher Sennenhund", "Boxer", "Bullmastiff", "Tibetan Mastiff", "French Bulldog",
+    "Great Dane", "Saint Bernard", "Siberian Husky", "Alaskan Malamute", "Samoyed",
+    "Akita", "Shiba Inu", "Chow Chow", "Pomeranian", "Pembroke Welsh Corgi",
+    "Cardigan Welsh Corgi", "Toy Poodle", "Miniature Poodle", "Standard Poodle", "Siamese Cat",
+    "Persian Cat", "Bengal Cat", "Maine Coon Cat", "Ragdoll Cat", "Sphynx Cat",
+    "British Shorthair Cat", "Abyssinian Cat", "Russian Blue Cat", "Birman Cat", "Scottish Fold Cat",
+]
+
+
 try:
     from models.dual_stream_classifier import DualStreamBiometricClassifier
     _DUAL_STREAM_AVAILABLE = True
@@ -279,6 +307,16 @@ class BreedIdentifier:
 
                 with torch.no_grad():
                     acoustic_logits = self.acoustic_model(fused_input)
+                    # Species-consistent masking: dogs get canine groups (0-4), cats get feline groups (5-7)
+                    if species == "dogs":
+                        for cat_idx in (5, 6, 7):
+                            if cat_idx < acoustic_logits.shape[-1]:
+                                acoustic_logits[..., cat_idx] = -1e9
+                    elif species == "cats":
+                        for dog_idx in (0, 1, 2, 3, 4):
+                            if dog_idx < acoustic_logits.shape[-1]:
+                                acoustic_logits[..., dog_idx] = -1e9
+
                     acoustic_probs = torch.softmax(acoustic_logits, dim=-1).cpu().numpy()[0]
 
                 acoustic_idx = int(np.argmax(acoustic_probs))
@@ -305,33 +343,57 @@ class BreedIdentifier:
                 visual_probs = torch.softmax(visual_logits, dim=-1).cpu().numpy()[0]
             visual_idx = int(np.argmax(visual_probs))
             visual_conf = float(visual_probs[visual_idx])
-            visual_breed = f"Breed_{visual_idx}"  # Map to actual breed name from label file
+            visual_breed = DEFAULT_VISUAL_BREEDS[visual_idx % len(DEFAULT_VISUAL_BREEDS)]
 
         # Build predictions
         predictions = []
         group_info = self.profiles.get(acoustic_group, {})
         examples = group_info.get("examples", [])
 
-        # Add acoustic-based predictions
-        for breed_name in examples[:self.config.top_k_breeds]:
+        if visual_features is not None and visual_breed:
+            fusion = "multimodal"
+            # 40% acoustic + 60% visual late fusion
+            fused_conf = float(min(0.98, (self.config.audio_fusion_weight * acoustic_conf) + (self.config.visual_fusion_weight * visual_conf)))
             predictions.append(BreedPrediction(
-                breed_name=breed_name,
+                breed_name=visual_breed,
                 group_name=group_info.get("display_name", acoustic_group),
-                confidence=acoustic_conf / len(examples),
-                source="audio",
+                confidence=fused_conf,
+                source="fused",
                 acoustic_evidence={
                     "f0_range": group_info.get("f0_range_hz"),
                     "breathiness": group_info.get("breathiness"),
                     "detected_f0": prosodic_features.get("mean_f0"),
                     "detected_hnr": prosodic_features.get("mean_hnr"),
+                    "acoustic_confidence": float(acoustic_conf),
+                    "visual_confidence": float(visual_conf),
                 }
             ))
-
-        # Determine fusion method
-        if visual_features is not None:
-            fusion = "multimodal"
+            # Append other plausible group breeds
+            for b_name in examples:
+                if b_name != visual_breed and len(predictions) < self.config.top_k_breeds:
+                    rem_conf = float(max(0.01, (1.0 - fused_conf) / max(len(examples) - 1, 1)))
+                    predictions.append(BreedPrediction(
+                        breed_name=b_name,
+                        group_name=group_info.get("display_name", acoustic_group),
+                        confidence=rem_conf,
+                        source="audio",
+                    ))
         else:
             fusion = "audio_only"
+            # Add acoustic-based predictions
+            for breed_name in examples[:self.config.top_k_breeds]:
+                predictions.append(BreedPrediction(
+                    breed_name=breed_name,
+                    group_name=group_info.get("display_name", acoustic_group),
+                    confidence=acoustic_conf / len(examples),
+                    source="audio",
+                    acoustic_evidence={
+                        "f0_range": group_info.get("f0_range_hz"),
+                        "breathiness": group_info.get("breathiness"),
+                        "detected_f0": prosodic_features.get("mean_f0"),
+                        "detected_hnr": prosodic_features.get("mean_hnr"),
+                    }
+                ))
 
         return BreedReport(
             top_predictions=predictions,

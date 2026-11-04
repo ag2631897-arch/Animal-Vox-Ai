@@ -18,6 +18,7 @@ Module Enrichment (parallel):
   - Module 05: Animal Detection & Auto-Routing
 """
 
+import os
 import json
 import time
 import asyncio
@@ -25,6 +26,7 @@ import logging
 import re
 import numpy as np
 import torch
+import librosa
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, AsyncGenerator
 
@@ -211,7 +213,13 @@ class AnimalVoxPipeline:
         f0, _, _ = librosa.pyin(
             analysis_audio, fmin=50, fmax=4000, sr=sr
         )
-        f0_valid = f0[~np.isnan(f0)] if f0 is not None else np.array([0.0])
+        f0_valid = f0[~np.isnan(f0)] if f0 is not None else np.array([])
+        if len(f0_valid) < 2:
+            try:
+                f0_yin = librosa.yin(analysis_audio, fmin=50, fmax=2000, sr=sr)
+                f0_valid = f0_yin[(f0_yin >= 50) & (f0_yin <= 2000)]
+            except Exception:
+                pass
         if len(f0_valid) == 0:
             f0_valid = np.array([0.0])
 
@@ -357,27 +365,29 @@ class AnimalVoxPipeline:
     async def _generate_translation(self, species: str, classification: Dict,
                                      seq_context: str, escalation: str,
                                      emotion: Optional[str] = None,
-                                     breed: Optional[str] = None) -> Dict:
+                                     breed: Optional[str] = None,
+                                     species_detail: Optional[str] = None,
+                                     acoustic_signature: Optional[str] = None) -> Dict:
         """Generate natural language translation via Groq API or bioacoustic engine."""
-        # Multi-label acoustic affinities are useful evidence, but asking the
-        # NLG model to narrate all of them encourages invented stories such as
-        # "first an alarm, then play, then loneliness."  Translate only the
-        # primary behavioural interpretation.
         behavior_names = [classification["behaviors"][0]["name"]]
         primary_behavior = behavior_names[0]
         translation_emotion = self._select_translation_emotion(primary_behavior, emotion)
         ethology_ctx = self.kb.get_context_for_llm(species, behavior_names)
 
+        detail = species_detail or breed or "unspecified"
+        acoustic_sig = acoustic_signature or "Natural bioacoustic vocalization"
+
         prompt = build_prompt(
             species=species,
-            species_detail=breed,
+            species_detail=detail,
             behavior_labels=behavior_names,
             intensity=classification["intensity"],
             urgency=classification["urgency"],
             sequence_context=seq_context,
             escalation=escalation,
             ethology_context=ethology_ctx,
-            emotional_state=translation_emotion
+            emotional_state=translation_emotion,
+            acoustic_signature=acoustic_sig
         )
 
         # Try Groq API first
@@ -574,7 +584,7 @@ class AnimalVoxPipeline:
     async def translate(self, audio_path: str = None, audio_bytes: bytes = None,
                         audio_format: str = "wav", species: str = None,
                         pet_id: str = None, photo_features: torch.Tensor = None,
-                        enable_modules: bool = True) -> Dict:
+                        enable_modules: bool = True, filename: str = None) -> Dict:
         """
         Main entry point: translate animal audio to human language.
 
@@ -588,6 +598,7 @@ class AnimalVoxPipeline:
             pet_id: Optional pet profile ID for baseline tracking
             photo_features: Optional visual features for breed ID
             enable_modules: Run enrichment modules (health, emotion, etc.)
+            filename: Original upload/recording filename for hints
 
         Returns dict with: translation, vocalization_type, emotion,
         behavior_context, confidence, behaviors, intensity, urgency,
@@ -601,59 +612,149 @@ class AnimalVoxPipeline:
         # Stage 1: Preprocessing
         if audio_path:
             clips = preprocess_audio(audio_path)
+            if not filename:
+                filename = Path(audio_path).name
         elif audio_bytes:
             clips = preprocess_audio_bytes(audio_bytes, format=audio_format)
         else:
             raise ValueError("Provide audio_path or audio_bytes")
 
         if not clips:
-            return {"error": "No audio content detected", "translation": ""}
+            return {"error": "no_animal_detected", "animal_detected": False, "translation": "", "message": "No audio content detected"}
 
         # Select the clip with highest acoustic vocal energy (avoids silent pre-roll in longer recordings)
         clip = max(clips, key=lambda c: float(np.sqrt(np.mean(c**2))))
 
-        # ── Stage 0: Anti-Spoofing Gate ──────────────────────
+        # ── Stage 0.1: Music / Song / BGM and Non-Animal SFX Filter ────
+        from models.music_detector import detect_music_or_sfx
+        full_dur = None
+        if audio_path and os.path.exists(audio_path):
+            try:
+                full_dur = librosa.get_duration(path=audio_path)
+            except Exception:
+                pass
+        music_or_sfx, filter_reason = detect_music_or_sfx(
+            clip, sr=AUDIO_CONFIG.sample_rate, filename=filename, full_duration=full_dur
+        )
+        if music_or_sfx == "music_detected":
+            elapsed = time.time() - start_time
+            return {
+                "error": "music_detected",
+                "music_detected": True,
+                "is_music": True,
+                "translation": "",
+                "message": "🎵 Music / Songs / BGMs not allowed for translation. AnimalVox AI is designed for real animal vocalizations.",
+                "rejection_reason": filter_reason or "Music, songs, and background tracks cannot be translated.",
+                "processing_time_ms": int(elapsed * 1000),
+            }
+        elif music_or_sfx == "no_animal_detected":
+            elapsed = time.time() - start_time
+            return {
+                "error": "no_animal_detected",
+                "animal_detected": False,
+                "no_animal": True,
+                "translation": "",
+                "message": "❓ No animal vocalization detected. This audio appears to be a sound effect or synthetic audio.",
+                "rejection_reason": filter_reason or "No animal detected. Sound effects, meme audio, or ambient noise cannot be translated.",
+                "processing_time_ms": int(elapsed * 1000),
+            }
+
+        # ── Stage 0.2: Anti-Spoofing & Mixed Audio Verification ──
+        human_speech_removed = False
         spoof_result = None
         if enable_modules:
-            spoof_result = self.anti_spoof.check(clip, sr=AUDIO_CONFIG.sample_rate)
-            if spoof_result.is_human:
+            # 1. Check if there is human speech mixed with a real animal vocalization
+            cleaned_clip, had_human_speech = self.animal_detector.vad.remove_human_speech(clip)
+            if had_human_speech:
+                cleaned_rms = float(np.sqrt(np.mean(cleaned_clip ** 2)))
+                if cleaned_rms >= 0.020:
+                    # Verify the isolated segment contains a genuine animal vocalization (not human imitation)
+                    cleaned_spoof = self.anti_spoof.check(cleaned_clip, sr=AUDIO_CONFIG.sample_rate, filename=filename)
+                    if not cleaned_spoof.is_human:
+                        clip = cleaned_clip
+                        spoof_result = cleaned_spoof
+                        human_speech_removed = True
+                        logger.info("Mixed audio: isolated animal vocalization and removed human talking.")
+
+            # 2. Check anti-spoofing on the active vocalization clip
+            full_spoof = self.anti_spoof.check(clip, sr=AUDIO_CONFIG.sample_rate, filename=filename)
+            if spoof_result is None:
+                spoof_result = full_spoof
+
+            # 3. Handle human detection:
+            # ONLY reject if the clip is identified as human AND no genuine animal vocalization was isolated
+            if full_spoof.is_human and not human_speech_removed:
                 elapsed = time.time() - start_time
-                return {
-                    "error": "human_detected",
-                    "translation": "",
-                    "message": "🚫 Human voice detected, not an animal! "
-                               "AnimalVox AI only translates real animal vocalizations.",
-                    "human_probability": spoof_result.human_probability,
-                    "rejection_reason": spoof_result.rejection_reason,
-                    "confidence": spoof_result.confidence,
-                    "processing_time_ms": int(elapsed * 1000),
-                }
+                if getattr(full_spoof, "is_conversational_speech", False):
+                    # Normal conversational speech with no animal voice in audio
+                    return {
+                        "error": "no_animal_detected",
+                        "animal_detected": False,
+                        "translation": "",
+                        "message": "❓ No animal vocalization detected. The recording contains human speech, but no animal sounds to translate.",
+                        "rejection_reason": full_spoof.rejection_reason or "Human conversational speech detected without animal vocalization.",
+                        "confidence": full_spoof.confidence,
+                        "processing_time_ms": int(elapsed * 1000),
+                    }
+                else:
+                    # Intentional human imitation of animal voices detected
+                    return {
+                        "error": "human_detected",
+                        "human_detected": True,
+                        "is_human": True,
+                        "translation": "",
+                        "message": "🚫 Human voice detected imitating an animal! AnimalVox AI only translates real animal vocalizations.",
+                        "human_probability": full_spoof.human_probability,
+                        "rejection_reason": full_spoof.rejection_reason or "Human vocal imitation detected.",
+                        "confidence": full_spoof.confidence,
+                        "processing_time_ms": int(elapsed * 1000),
+                    }
 
         # Stage 2: Feature extraction (3 parallel paths)
         audio_embed, cnn_features, prosodic_tensor = self._extract_features(clip)
         prosodic_dict = self._get_prosodic_dict(clip)
         fused_266 = torch.cat([audio_embed, prosodic_tensor], dim=-1)
 
-        # ── Module 05: Auto-Detection (if no species specified) ──
+        # ── Module 05: Auto-Detection / Animal Presence Verification ──
         detection_result = None
-        if species is None and enable_modules:
-            detection_result = self.animal_detector.detect(clip, audio_embed)
+        if enable_modules:
+            detection_result = self.animal_detector.detect(clip, audio_embed=fused_266, filename=filename)
+
+            if detection_result.unsupported_species:
+                if species is not None and species in SPECIES_GROUPS:
+                    detection_result.unsupported_species = False
+                    detection_result.unsupported_animal = ""
+                else:
+                    elapsed = time.time() - start_time
+                    animal_name = detection_result.unsupported_animal or "this animal"
+                    return {
+                        "error": "unsupported_species",
+                        "species_supported": False,
+                        "detected_animal": animal_name,
+                        "translation": "",
+                        "message": f"Species Not Supported Yet: We detected a {animal_name} vocalization, which isn't in our translation database yet.",
+                        "rejection_reason": f"The detected species ({animal_name}) is not currently supported in AnimalVox AI. Supported species: Dogs, Cats, Birds, Dolphins, Whales, Frogs.",
+                        "processing_time_ms": int(elapsed * 1000),
+                    }
 
             if not detection_result.has_animal:
                 elapsed = time.time() - start_time
                 return {
                     "error": "no_animal_detected",
+                    "animal_detected": False,
                     "translation": "",
                     "message": "No animal vocalization detected in this audio.",
                     "soundscape": detection_result.soundscape,
+                    "rejection_reason": "No animal vocalization was found in this audio. AnimalVox AI only translates genuine animal sounds.",
                     "processing_time_ms": int(elapsed * 1000),
                 }
 
-            # Use top detection as species
-            if detection_result.species_detections:
-                species = detection_result.species_detections[0]["species"]
-            else:
-                species = "dogs"  # Default fallback
+            # Use top detection as species if species was not specified
+            if species is None:
+                if detection_result.species_detections:
+                    species = detection_result.species_detections[0]["species"]
+                else:
+                    species = "dogs"  # Default fallback
 
         species = species or "dogs"
 
@@ -694,13 +795,15 @@ class AnimalVoxPipeline:
             except Exception as e:
                 logger.warning(f"Breed identifier error: {e}")
 
-            # Module 03: Emotional Tracking (266-dim)
+            # Module 03: Emotional Tracking (266-dim with Multi-Bout Sequence Smoothing)
             try:
                 emotion_report = self.emotional_tracker.assess(
                     fused_embedding=fused_266,
                     prosodic_features=prosodic_dict,
                     species=species,
-                    pet_id=pet_id
+                    pet_id=pet_id,
+                    sequence_history=self.call_history,
+                    escalation_pattern=escalation
                 )
             except Exception as e:
                 logger.warning(f"Emotional tracker error: {e}")
@@ -723,17 +826,77 @@ class AnimalVoxPipeline:
                 except Exception as e:
                     logger.warning(f"Wellbeing dashboard error: {e}")
 
-        # Stage 5: NLG Translation (now enriched with emotional and breed context)
+        # Stage 5: NLG Translation (now enriched with emotional, acoustic, and species context)
         primary_behavior = classification["behaviors"][0]
         model_emotion_name = emotion_report.primary_emotion.state_name if emotion_report else None
         display_emotion = self._select_translation_emotion(
             primary_behavior["name"], model_emotion_name
         )
         breed_name = breed_report.top_predictions[0].breed_name if (breed_report and breed_report.top_predictions) else None
+
+        # Resolve nuanced species detail
+        species_detail = breed_name
+        fn_lower = (filename or "").lower()
+        if not species_detail:
+            if species == "whales":
+                if any(k in fn_lower for k in ["blue whale", "blue_whale"]):
+                    species_detail = "Blue Whale"
+                elif any(k in fn_lower for k in ["humpback"]):
+                    species_detail = "Humpback Whale"
+                elif any(k in fn_lower for k in ["killer whale", "orca"]):
+                    species_detail = "Orca / Killer Whale"
+                elif any(k in fn_lower for k in ["beluga"]):
+                    species_detail = "Beluga Whale"
+                elif any(k in fn_lower for k in ["fin whale"]):
+                    species_detail = "Fin Whale"
+                elif prosodic_dict.get("mean_f0", 100) < 65:
+                    species_detail = "Blue / Fin Whale (Infrasonic)"
+                else:
+                    species_detail = "Humpback Whale"
+            elif species == "birds":
+                for b_name in ["robin", "sparrow", "canary", "parrot", "crow", "hawk", "eagle", "owl", "finch", "warbler", "songbird"]:
+                    if b_name in fn_lower:
+                        species_detail = b_name.capitalize()
+                        break
+                if not species_detail:
+                    species_detail = "Songbird" if prosodic_dict.get("f0_range", 0) > 200 else "Wild Avian"
+            elif species == "frogs":
+                for f_name in ["bullfrog", "treefrog", "tree frog", "toad", "poison dart"]:
+                    if f_name in fn_lower:
+                        species_detail = f_name.capitalize()
+                        break
+                if not species_detail:
+                    species_detail = "Chorus Frog"
+            elif species == "dolphins":
+                species_detail = "Bottlenose Dolphin"
+
+        # Generate acoustic description for translation personalization
+        f0_val = prosodic_dict.get("mean_f0", 0)
+        f0_rng = prosodic_dict.get("f0_range", 0)
+        rms_val = prosodic_dict.get("mean_rms", 0)
+        hnr_val = prosodic_dict.get("mean_hnr", 0)
+        rate_val = prosodic_dict.get("call_rate", 1.0)
+        if species == "whales":
+            if f0_val < 65:
+                acoustic_sig = f"Deep infrasonic low-frequency moan (~{f0_val:.0f} Hz), steady trans-oceanic resonance, HNR {hnr_val:.1f} dB"
+            elif f0_rng > 65:
+                acoustic_sig = f"Melodic frequency-modulated song phrase (pitch variation ~{f0_rng:.0f} Hz, F0 ~{f0_val:.0f} Hz), rich harmonic theme"
+            else:
+                acoustic_sig = f"Sustained underwater cetacean vocalization (~{f0_val:.0f} Hz), volume RMS {rms_val:.2f}"
+        elif species == "birds":
+            acoustic_sig = f"Avian call/song with F0 ~{f0_val:.0f} Hz, modulation range ~{f0_rng:.0f} Hz, rate ~{rate_val:.1f} calls/sec"
+        elif species == "dogs":
+            acoustic_sig = f"Canine vocalization (~{f0_val:.0f} Hz), burst rate {rate_val:.1f} onsets/sec, acoustic power {rms_val:.2f}"
+        elif species == "cats":
+            acoustic_sig = f"Feline vocalization with pitch ~{f0_val:.0f} Hz, modulation ~{f0_rng:.0f} Hz"
+        else:
+            acoustic_sig = f"Acoustic pitch ~{f0_val:.0f} Hz, call rate {rate_val:.1f}/sec"
+
         translation = await self._generate_translation(
             species=species, classification=classification,
             seq_context=seq_context, escalation=escalation,
-            emotion=model_emotion_name, breed=breed_name
+            emotion=model_emotion_name, breed=breed_name,
+            species_detail=species_detail, acoustic_signature=acoustic_sig
         )
 
         elapsed = time.time() - start_time
@@ -742,12 +905,15 @@ class AnimalVoxPipeline:
         result = {
             **translation,
             "species": species,
+            "species_detail": species_detail,
+            "behavior": classification["behaviors"][0]["name"] if classification.get("behaviors") else None,
             "emotion": display_emotion,
             "species_emoji": SPECIES_GROUPS.get(species, {}).get("emoji", "🔊"),
             "behaviors": classification["behaviors"],
             "intensity": classification["intensity"],
             "urgency": classification["urgency"],
             "escalation_pattern": escalation,
+            "human_speech_removed": human_speech_removed,
             "processing_time_ms": int(elapsed * 1000),
             "mel_spectrogram": generate_mel_spectrogram(clip).tolist(),
         }
@@ -851,7 +1017,8 @@ class AnimalVoxPipeline:
                                audio_bytes: bytes = None,
                                audio_format: str = "wav",
                                species: str = None,
-                               pet_id: str = None) -> AsyncGenerator[Dict, None]:
+                               pet_id: str = None,
+                               filename: str = None) -> AsyncGenerator[Dict, None]:
         """
         Streaming translation: yields word-by-word tokens for real-time display.
 
@@ -866,6 +1033,8 @@ class AnimalVoxPipeline:
         # Preprocessing
         if audio_path:
             clips = preprocess_audio(audio_path)
+            if not filename:
+                filename = Path(audio_path).name
         elif audio_bytes:
             clips = preprocess_audio_bytes(audio_bytes, format=audio_format)
         else:
@@ -873,30 +1042,108 @@ class AnimalVoxPipeline:
             return
 
         if not clips:
-            yield {"type": "error", "message": "No audio content detected"}
+            yield {"type": "no_animal", "message": "No audio content detected"}
             return
 
         # Select the clip with highest acoustic vocal energy (avoids silent pre-roll)
         clip = max(clips, key=lambda c: float(np.sqrt(np.mean(c**2))))
 
-        # Anti-spoofing check
-        spoof_result = self.anti_spoof.check(clip, sr=AUDIO_CONFIG.sample_rate)
-        if spoof_result.is_human:
+        # ── Stage 0.1: Music / Song / BGM and Non-Animal SFX Filter ────
+        from models.music_detector import detect_music_or_sfx
+        full_dur = None
+        if audio_path and os.path.exists(audio_path):
+            try:
+                full_dur = librosa.get_duration(path=audio_path)
+            except Exception:
+                pass
+        music_or_sfx, filter_reason = detect_music_or_sfx(
+            clip, sr=AUDIO_CONFIG.sample_rate, filename=filename, full_duration=full_dur
+        )
+        if music_or_sfx == "music_detected":
             yield {
-                "type": "human_detected",
-                "message": "🚫 Human voice detected, not an animal!",
-                "human_probability": spoof_result.human_probability,
-                "rejection_reason": spoof_result.rejection_reason,
+                "type": "music_detected",
+                "music_detected": True,
+                "is_music": True,
+                "message": "🎵 Music / Songs / BGMs not allowed for translation. AnimalVox AI is designed for real animal vocalizations.",
+                "rejection_reason": filter_reason or "Music, songs, and background tracks cannot be translated.",
+            }
+            return
+        elif music_or_sfx == "no_animal_detected":
+            yield {
+                "type": "no_animal_detected",
+                "animal_detected": False,
+                "no_animal": True,
+                "message": "❓ No animal vocalization detected. This audio appears to be a sound effect or synthetic audio.",
+                "rejection_reason": filter_reason or "No animal detected. Sound effects, meme audio, or ambient noise cannot be translated.",
             }
             return
 
-        # Auto-detection
-        detection_result = None
-        if species is None:
-            detection_result = self.animal_detector.detect(clip)
-            if not detection_result.has_animal:
-                yield {"type": "no_animal", "message": "No animal vocalization detected."}
+        # ── Stage 0.2: Anti-Spoofing & Mixed Audio Verification (Stream) ──
+        human_speech_removed = False
+        cleaned_clip, had_human_speech = self.animal_detector.vad.remove_human_speech(clip)
+        if had_human_speech:
+            cleaned_rms = float(np.sqrt(np.mean(cleaned_clip ** 2)))
+            if cleaned_rms >= 0.020:
+                cleaned_spoof = self.anti_spoof.check(cleaned_clip, sr=AUDIO_CONFIG.sample_rate, filename=filename)
+                if not cleaned_spoof.is_human:
+                    clip = cleaned_clip
+                    human_speech_removed = True
+                    logger.info("Mixed audio (stream): isolated animal vocalization and removed human talking.")
+
+        full_spoof = self.anti_spoof.check(clip, sr=AUDIO_CONFIG.sample_rate, filename=filename)
+        if full_spoof.is_human and not human_speech_removed:
+            if getattr(full_spoof, "is_conversational_speech", False):
+                yield {
+                    "type": "no_animal_detected",
+                    "animal_detected": False,
+                    "no_animal": True,
+                    "message": "❓ No animal vocalization detected in this audio. Human conversational speech was detected, but no animal sounds to translate.",
+                    "rejection_reason": full_spoof.rejection_reason or "Human speech detected without animal vocalization.",
+                }
                 return
+            else:
+                yield {
+                    "type": "human_detected",
+                    "human_detected": True,
+                    "is_human": True,
+                    "message": "🚫 Human voice detected imitating an animal!",
+                    "human_probability": full_spoof.human_probability,
+                    "rejection_reason": full_spoof.rejection_reason or "Human speech or vocal imitation detected.",
+                }
+                return
+
+        # Feature extraction
+        audio_embed, cnn_features, prosodic_tensor = self._extract_features(clip)
+        prosodic_dict = self._get_prosodic_dict(clip)
+        fused_266 = torch.cat([audio_embed, prosodic_tensor], dim=-1)
+
+        # ── Module 05: Auto-Detection / Animal Presence Verification ──
+        detection_result = self.animal_detector.detect(clip, audio_embed=fused_266, filename=filename)
+
+        if detection_result.unsupported_species:
+            if species is not None and species in SPECIES_GROUPS:
+                detection_result.unsupported_species = False
+                detection_result.unsupported_animal = ""
+            else:
+                animal_name = detection_result.unsupported_animal or "this animal"
+                yield {
+                    "type": "unsupported_species",
+                    "species_supported": False,
+                    "detected_animal": animal_name,
+                    "message": f"Species Not Supported Yet: {animal_name} is not in our translation database.",
+                    "rejection_reason": f"Species {animal_name} is not supported yet.",
+                }
+                return
+
+        if not detection_result.has_animal:
+            yield {
+                "type": "no_animal",
+                "message": "No animal vocalization detected.",
+                "rejection_reason": "No animal vocalization was found in this audio."
+            }
+            return
+
+        if species is None:
             species = detection_result.species_detections[0]["species"] if detection_result.species_detections else "dogs"
 
         species = species or "dogs"

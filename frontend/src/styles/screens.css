@@ -441,34 +441,3 @@
 
 .history-demo-note { margin: -15px 0 15px; color: var(--text-dim); font-size: 9px; }
 
-/* App screens share a compact three-size hierarchy, keeping small data easy to scan. */
-#root .app-shell * { font-size: 14px !important; }
-#root .app-shell .eyebrow,
-#root .app-shell .local-badge,
-#root .app-shell .live-chip,
-#root .app-shell .timeline-note,
-#root .app-shell .source-count,
-#root .app-shell .record-label,
-#root .app-shell .record-time,
-#root .app-shell .metric-item > span,
-#root .app-shell .screen-footnote,
-#root .app-shell .local-storage-note,
-#root .app-shell .history-date,
-#root .app-shell .history-meta,
-#root .app-shell .history-confidence,
-#root .app-shell .history-demo-note,
-#root .app-shell .pet-profile-info span,
-#root .app-shell .pet-profile-info small,
-#root .app-shell .form-grid label,
-#root .app-shell .account-form label,
-#root .app-shell .theme-current,
-#root .app-shell .color-row,
-#root .app-shell .color-hex,
-#root .app-shell .speed-control { font-size: 10px !important; }
-#root .app-shell .app-topbar h1,
-#root .app-shell .section-heading h2,
-#root .app-shell .translation-name,
-#root .app-shell .translation-copy,
-#root .app-shell .gauge-center strong,
-#root .app-shell .dimension-score strong,
-#root .app-shell .breed-winner h2 { font-size: 22px !important; }

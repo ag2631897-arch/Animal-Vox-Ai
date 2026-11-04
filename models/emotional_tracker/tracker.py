@@ -379,10 +379,12 @@ class EmotionalTracker:
 
     def assess(self, fused_embedding: torch.Tensor,
                prosodic_features: Dict, species: str,
-               pet_id: Optional[str] = None) -> EmotionReport:
+               pet_id: Optional[str] = None,
+               sequence_history: Optional[List[Dict]] = None,
+               escalation_pattern: Optional[str] = None) -> EmotionReport:
         """
         Classify emotional state and record to diary.
-        Uses trained neural classifier if available, otherwise runs Morton Bioacoustic Rules.
+        Uses trained neural classifier if available, calibrated by Multi-Bout Sequence Smoothing & Morton Bioacoustic Rules.
         """
         if self.has_trained_weights:
             try:
@@ -421,6 +423,29 @@ class EmotionalTracker:
                 probs = self._compute_heuristic_emotion_probs(prosodic_features, species)
         else:
             probs = self._compute_heuristic_emotion_probs(prosodic_features, species)
+
+        # Multi-Bout Temporal Sequence Smoothing
+        if sequence_history and len(sequence_history) >= 2:
+            recent_probs = []
+            for past_call in sequence_history[-3:]:
+                if "all_scores" in past_call and len(past_call["all_scores"]) == len(probs):
+                    recent_probs.append(np.array(past_call["all_scores"]))
+            if recent_probs:
+                history_mean = np.mean(recent_probs, axis=0)
+                probs = 0.70 * probs + 0.30 * history_mean
+                probs = probs / np.sum(probs)
+
+        # Escalation pattern modulation
+        if escalation_pattern == "escalation":
+            for idx in [0, 5, 6, 7]:  # High-arousal states
+                if idx < len(probs):
+                    probs[idx] *= 1.25
+            probs = probs / np.sum(probs)
+        elif escalation_pattern == "de-escalation":
+            for idx in [1, 8]:  # Calming/contentment states
+                if idx < len(probs):
+                    probs[idx] *= 1.30
+            probs = probs / np.sum(probs)
 
         # Build predictions sorted by confidence
         predictions = []

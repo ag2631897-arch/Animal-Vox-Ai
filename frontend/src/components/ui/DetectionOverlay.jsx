@@ -1,83 +1,111 @@
+import { useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
-import { AlertTriangle, HelpCircle, RefreshCw, ShieldAlert, UserX, X } from 'lucide-react'
+import { AlertTriangle, HelpCircle, Music, RefreshCw, ShieldAlert, UserX, X } from 'lucide-react'
 
 const configs = {
   no_animal: {
     Icon: HelpCircle,
-    title: 'No Animal Detected',
-    subtitle: 'We couldn\'t find any animal vocalizations in this audio.',
-    description: 'Make sure the recording contains clear animal sounds — barking, meowing, chirping, or other vocalizations. Background noise, music, or silence won\'t produce a translation.',
-    color: '#F5A623',
-    gradient: 'linear-gradient(135deg, rgba(245,166,35,0.12), rgba(245,166,35,0.03))',
-    tips: ['Move the microphone closer to the animal', 'Reduce background noise and music', 'Record for at least 2–3 seconds', 'Ensure your pet is actually vocalizing'],
+    title: 'No animal detected',
+    subtitle: 'We could not find an animal vocalization in this audio.',
+    description: 'Use a clear recording of an animal vocalization. Background noise, sound effects, music, and silence cannot be interpreted.',
+    tone: 'warning',
+    tips: ['Move the microphone closer to the animal', 'Reduce background noise and music', 'Record for at least two seconds'],
   },
   human_detected: {
     Icon: UserX,
-    title: 'Human Voice Detected',
-    subtitle: 'This audio contains human speech mimicking animal sounds.',
-    description: 'Our anti-spoofing system identified human vocal patterns instead of genuine animal vocalizations. AnimalVox is designed to interpret real animal sounds, not imitations.',
-    color: '#EF4444',
-    gradient: 'linear-gradient(135deg, rgba(239,68,68,0.12), rgba(239,68,68,0.03))',
-    tips: ['Record your actual pet — not an imitation', 'Avoid speaking or humming during recording', 'If your pet is nearby, wait for their sound'],
+    title: 'Human voice detected',
+    subtitle: 'This audio contains human speech or an imitation.',
+    description: 'The recording contains human vocal patterns rather than a clear animal vocalization.',
+    tone: 'danger',
+    tips: ['Record your pet directly', 'Avoid speaking or humming during recording', 'Wait for a clear animal sound'],
   },
   unsupported_species: {
     Icon: ShieldAlert,
-    title: 'Species Not Supported Yet',
-    subtitle: 'The detected animal isn\'t in our translation database.',
-    description: 'We\'re continuously expanding our species library. Currently supported: Dogs, Cats, Birds, Dolphins, Whales, and Frogs. More species are on the way.',
-    color: '#A78BFA',
-    gradient: 'linear-gradient(135deg, rgba(167,139,250,0.12), rgba(167,139,250,0.03))',
-    tips: ['Try one of our six supported species', 'Check back — we add new species regularly', 'Contact us to request a specific species'],
+    title: 'Species not supported',
+    subtitle: 'The detected animal is not currently supported.',
+    description: 'This recording cannot be interpreted with the species currently supported by AnimalVox.',
+    tone: 'neutral',
+    tips: ['Try a recording from a supported species', 'Use a clearer, isolated recording', 'Check back as support expands'],
+  },
+  music_detected: {
+    Icon: Music,
+    title: 'Music cannot be interpreted',
+    subtitle: 'Music, songs, and background tracks cannot be translated.',
+    description: 'AnimalVox works with isolated animal vocalizations, not songs, background music, instrumentals, or media tracks.',
+    tone: 'warning',
+    tips: ['Record your pet in a quiet environment', 'Upload an isolated animal sound', 'Turn off nearby speakers and playback'],
   },
 }
 
-export default function DetectionOverlay({ type, onDismiss }) {
-  const config = configs[type]
+export default function DetectionOverlay({ type, onDismiss, animalName }) {
+  const dialogRef = useRef(null)
+  const closeButtonRef = useRef(null)
+  const effectiveType = typeof type === 'object' ? type?.type : type
+  const effectiveAnimal = animalName || (typeof type === 'object' ? type?.animalName : '')
+  const config = configs[effectiveType]
+
+  useEffect(() => {
+    const previousFocus = document.activeElement
+    closeButtonRef.current?.focus()
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onDismiss()
+      }
+      if (event.key !== 'Tab') return
+      const focusable = dialogRef.current?.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])')
+      if (!focusable?.length) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      previousFocus?.focus?.()
+    }
+  }, [onDismiss])
+
   if (!config) return null
   const { Icon } = config
+  const subtitle = effectiveType === 'unsupported_species' && effectiveAnimal
+    ? `We detected a ${effectiveAnimal} vocalization, which is not currently supported.`
+    : config.subtitle
 
   return (
-    <motion.div
-      className="detection-overlay"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.25 }}
-    >
+    <motion.div className="signal-dialog-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
       <motion.div
-        className="detection-card"
-        style={{ '--det-color': config.color, '--det-gradient': config.gradient }}
-        initial={{ scale: 0.92, y: 24, opacity: 0 }}
+        className="signal-dialog"
+        data-tone={config.tone}
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="detection-dialog-title"
+        aria-describedby="detection-dialog-description"
+        initial={{ scale: 0.98, y: 16, opacity: 0 }}
         animate={{ scale: 1, y: 0, opacity: 1 }}
-        exit={{ scale: 0.92, y: 24, opacity: 0 }}
-        transition={{ type: 'spring', damping: 22, stiffness: 260 }}
+        exit={{ scale: 0.98, y: 16, opacity: 0 }}
+        transition={{ duration: 0.2, ease: [0.2, 0, 0, 1] }}
       >
-        <button className="detection-close" onClick={onDismiss} aria-label="Dismiss">
-          <X size={18} />
-        </button>
-
-        <div className="detection-icon-ring">
-          <span className="detection-pulse-ring" />
-          <span className="detection-pulse-ring delay" />
-          <Icon size={36} strokeWidth={1.6} />
+        <button ref={closeButtonRef} className="signal-dialog-close" type="button" onClick={onDismiss} aria-label="Close dialog"><X size={18} /></button>
+        <div className="signal-dialog-icon"><Icon size={24} strokeWidth={1.5} /></div>
+        <h2 id="detection-dialog-title">{config.title}</h2>
+        <p className="signal-dialog-subtitle">{subtitle}</p>
+        <p id="detection-dialog-description" className="signal-dialog-description">{config.description}</p>
+        <div className="signal-dialog-tips">
+          <h3><AlertTriangle size={16} /> What to try</h3>
+          <ul>{config.tips.map((tip) => <li key={tip}>{tip}</li>)}</ul>
         </div>
-
-        <h2>{config.title}</h2>
-        <p className="detection-subtitle">{config.subtitle}</p>
-        <p className="detection-description">{config.description}</p>
-
-        <div className="detection-tips">
-          <h4><AlertTriangle size={13} /> What to try</h4>
-          <ul>
-            {config.tips.map((tip) => (
-              <li key={tip}>{tip}</li>
-            ))}
-          </ul>
-        </div>
-
-        <button className="detection-retry" onClick={onDismiss}>
-          <RefreshCw size={15} /> Try Again
-        </button>
+        <footer className="signal-dialog-actions">
+          <button className="primary-button signal-dialog-retry" type="button" onClick={onDismiss}><RefreshCw size={16} /> Try again</button>
+          <button className="ghost-action signal-dialog-dismiss" type="button" onClick={onDismiss}>Close</button>
+        </footer>
       </motion.div>
     </motion.div>
   )

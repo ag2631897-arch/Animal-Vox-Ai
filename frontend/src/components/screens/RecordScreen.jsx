@@ -6,23 +6,22 @@ import { Shimmer } from '../ui/SkeletonCard'
 import SonarRings from '../ui/SonarRings'
 import WaveformBars from '../ui/WaveformBars'
 import ConfidenceBar from '../ui/ConfidenceBar'
-import RetroDataPanel from '../ui/RetroDataPanel'
 import DetectionOverlay from '../ui/DetectionOverlay'
 import AudioDropZone from '../ui/AudioDropZone'
 import AutoSpeciesToggle from '../ui/AutoSpeciesToggle'
+import { SpeciesMark } from '../ui/SpeciesMark'
 import { useAudioRecorder } from '../../hooks/useAudioRecorder'
 import { useAppStore } from '../../store/useAppStore'
 import { createSpeechUtterance } from '../../hooks/speech'
 import { resolveSpecies, translateAudio } from '../../lib/api'
 import { preAnalyzeAudio, classifyDetectionResult } from '../../hooks/useAudioAnalyzer'
+import { readableSignal, readableSpecies } from '../../lib/labels'
 
 function formatTime(seconds) {
   return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
 }
 
-function displayBehavior(result) {
-  return result?.vocalization_type || result?.behaviors?.[0]?.name?.replaceAll('_', ' ') || 'Behavior signal'
-}
+function displayBehavior(result) { return readableSignal(result?.vocalization_type || result?.behaviors?.[0]?.name) }
 
 export default function RecordScreen() {
   const activePet = useAppStore((s) => s.pets.find((p) => p.id === s.activePetId))
@@ -34,11 +33,11 @@ export default function RecordScreen() {
   const toggleAutoDetect = useAppStore((s) => s.toggleAutoSpeciesDetection)
 
   const [analysis, setAnalysis] = useState(null)
-  const [rawOpen, setRawOpen] = useState(false)
   const [saved, setSaved] = useState(false)
   const [speaking, setSpeaking] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [detectionType, setDetectionType] = useState(null)
+  const [detectedAnimal, setDetectedAnimal] = useState('')
   const [uploadedFileName, setUploadedFileName] = useState('')
   const [visibleWords, setVisibleWords] = useState(0)
   const [typewriterDone, setTypewriterDone] = useState(false)
@@ -48,6 +47,7 @@ export default function RecordScreen() {
 
   const analyzeRecording = useCallback(async ({ blob, fileName }) => {
     setDetectionType(null)
+    setDetectedAnimal('')
     setAnalysis(null)
     setVisibleWords(0)
     setTypewriterDone(false)
@@ -55,9 +55,9 @@ export default function RecordScreen() {
     setUploadedFileName(fileName || '')
 
     // Client-side pre-check
-    const preCheck = await preAnalyzeAudio(blob)
-    if (preCheck.type === 'no_animal') {
-      setDetectionType('no_animal')
+    const preCheck = await preAnalyzeAudio(blob, fileName)
+    if (preCheck.type === 'no_animal' || preCheck.type === 'music_detected') {
+      setDetectionType(preCheck.type)
       throw new Error(preCheck.reason || 'No animal vocalizations detected in this audio.')
     }
 
@@ -78,6 +78,7 @@ export default function RecordScreen() {
     if (result.error) {
       const det = classifyDetectionResult(result) || 'no_animal'
       setDetectionType(det)
+      setDetectedAnimal(result.detected_animal || '')
       throw new Error(result.rejection_reason || result.message || 'Animal vocalization could not be confirmed.')
     }
 
@@ -93,17 +94,16 @@ export default function RecordScreen() {
     }
 
     setAnalysis(result)
-    setRawOpen(false)
     setSaved(false)
     addTranslation({
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       createdAt: new Date().toISOString(),
       petId: matchedPet?.id || '',
       petName: matchedPet?.name || result.species || 'Unknown animal',
-      emoji: matchedPet?.emoji || result.species_emoji || '🐾',
+      emoji: '',
       translation: result.translation,
       behavior: displayBehavior(result),
-      confidence: result.behaviors?.[0]?.score || 0,
+      confidence: result.behaviors?.[0]?.score ?? null,
       result,
     })
   }, [activePet, pets, addTranslation, autoDetect])
@@ -113,6 +113,37 @@ export default function RecordScreen() {
   const isProcessing = recorder.status === 'processing'
   const isResult = recorder.status === 'result' && analysis
   const confidence = analysis?.behaviors?.[0]?.score || 0
+
+  const detectedSpeciesNormalized = (analysis?.species || '').toLowerCase()
+  const activePetMatchesSpecies = activePet && (
+    (activePet.species || '').toLowerCase().includes(detectedSpeciesNormalized) ||
+    detectedSpeciesNormalized.includes((activePet.species || '').toLowerCase())
+  )
+
+  const getDisplayHeader = () => {
+    if (!analysis) return { species: '', name: 'Animal', isDetected: false }
+    if (!autoDetect && activePet) {
+      return { species: activePet.species, name: activePet.name, isDetected: false }
+    }
+    if (autoDetect && activePetMatchesSpecies) {
+      return { species: activePet.species || analysis.species, name: activePet.name, isDetected: false }
+    }
+    if (autoDetect && pets?.length > 0) {
+      const match = pets.find((p) => {
+        const s = (p.species || '').toLowerCase()
+        return detectedSpeciesNormalized.includes(s) || s.includes(detectedSpeciesNormalized)
+      })
+      if (match) return { species: match.species || analysis.species, name: match.name, isDetected: false }
+    }
+    const formatted = analysis.species
+      ? analysis.species.charAt(0).toUpperCase() + analysis.species.slice(1)
+      : 'Animal'
+    return {
+      species: analysis.species,
+      name: readableSpecies(formatted, 'Animal'),
+      isDetected: true,
+    }
+  }
   const translationWords = analysis?.translation?.split(/\s+/) || []
 
   // Typewriter effect + auto-speak when result arrives
@@ -225,7 +256,13 @@ export default function RecordScreen() {
 
         {/* ─── Detection Overlays ─── */}
         <AnimatePresence>
-          {detectionType && <DetectionOverlay type={detectionType} onDismiss={() => setDetectionType(null)} />}
+          {detectionType && (
+            <DetectionOverlay
+              type={detectionType}
+              animalName={detectedAnimal}
+              onDismiss={() => { setDetectionType(null); setDetectedAnimal('') }}
+            />
+          )}
         </AnimatePresence>
 
         {/* ─── Right: Result / Skeleton ─── */}
@@ -247,9 +284,25 @@ export default function RecordScreen() {
             <motion.div key="result" className="result-column" initial={{ opacity: 0, y: 12, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.28 }}>
               <GlassCard className="result-card">
                 <div className="result-owner">
-                  <span>{activePet?.emoji || analysis.species_emoji || '🐾'} {activePet?.name || analysis.species || 'Animal'}</span>
-                  <small>Probable meaning based on this recording; not a literal translation.</small>
+                  {(() => {
+                    const header = getDisplayHeader()
+                    return (
+                      <>
+                        <span><SpeciesMark species={header.species} size={16} /> {header.name}</span>
+                        <small>
+                          {header.isDetected
+                            ? `Auto-detected species: ${analysis.species}. Probable meaning; not a literal translation.`
+                            : 'Probable meaning based on this recording; not a literal translation.'}
+                        </small>
+                      </>
+                    )
+                  })()}
                 </div>
+                {Boolean(analysis.human_speech_removed) && (
+                  <div className="human-removed-pill">
+                    <span>Human speech was removed before interpretation.</span>
+                  </div>
+                )}
                 <div className="translation-name">Interpretation<span>:</span></div>
 
                 {/* Typewriter translation */}
@@ -287,9 +340,6 @@ export default function RecordScreen() {
                   <div className="metric-item"><span>INTENSITY</span><div className="metric-value">{Math.round((analysis.intensity || 0) * 100)}%</div><ConfidenceBar value={analysis.intensity || 0} color="var(--accent-2)" /></div>
                   <div className="metric-item"><span>URGENCY</span><div className="metric-value amber-text">{Math.round((analysis.urgency || 0) * 100)}%</div><ConfidenceBar value={analysis.urgency || 0} color="var(--accent-3)" /></div>
                 </div>
-
-                <button className="retro-toggle" onClick={() => setRawOpen((v) => !v)} aria-expanded={rawOpen}>{rawOpen ? '< Hide Raw Data >' : '< View Raw Data >'}</button>
-                <AnimatePresence>{rawOpen && <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.25 }}><RetroDataPanel result={analysis} /></motion.div>}</AnimatePresence>
 
                 <div className="result-actions">
                   <button className={`ghost-action ${saved ? 'saved' : ''}`} onClick={() => setSaved((v) => !v)}>{saved ? <Check size={15} /> : <Save size={15} />}{saved ? 'Saved' : 'Save'}</button>

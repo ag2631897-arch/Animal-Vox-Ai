@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml">
+
+  <!-- Home / Bioacoustic Portal -->
+  <url>
+    <loc>https://animalvox.ai/</loc>
+    <lastmod>2026-11-03T00:00:00+00:00</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+    <image:image>
+      <image:loc>https://animalvox.ai/images/animalvox-og-preview.png</image:loc>
+      <image:title>AnimalVox AI — Real-Time Animal Vocalization Translator</image:title>
+      <image:caption>Bioacoustic neural AI translator for dogs, cats, songbirds, dolphins, whales, and frogs</image:caption>
+    </image:image>
+    <image:image>
+      <image:loc>https://animalvox.ai/images/animals/dog.png</image:loc>
+      <image:title>Dog Bark Translator Bioacoustics</image:title>
+    </image:image>
+    <image:image>
+      <image:loc>https://animalvox.ai/images/animals/cat.png</image:loc>
+      <image:title>Cat Meow and Purr Vocal Decoder</image:title>
+    </image:image>
+    <image:image>
+      <image:loc>https://animalvox.ai/images/animals/bird.png</image:loc>
+      <image:title>Bird Song and Call Identification AI</image:title>
+    </image:image>
+    <image:image>
+      <image:loc>https://animalvox.ai/images/animals/dolphin.png</image:loc>
+      <image:title>Dolphin Signature Whistle Interpreter</image:title>
+    </image:image>
+    <image:image>
+      <image:loc>https://animalvox.ai/images/animals/whale.png</image:loc>
+      <image:title>Whale Song and Deep Ocean Bioacoustics Translator</image:title>
+    </image:image>
+    <image:image>
+      <image:loc>https://animalvox.ai/images/animals/frog.png</image:loc>
+      <image:title>Frog and Anuran Choral Call Decoder</image:title>
+    </image:image>
+  </url>
+
+  <!-- Quick Translator (No Sign-in Required) -->
+  <url>
+    <loc>https://animalvox.ai/app/quick</loc>
+    <lastmod>2026-11-03T00:00:00+00:00</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.95</priority>
+  </url>
+
+  <!-- Landing / Methodology -->
+  <url>
+    <loc>https://animalvox.ai/landing</loc>
+    <lastmod>2026-11-03T00:00:00+00:00</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.90</priority>
+  </url>
+
+  <!-- Real-Time Acoustic Species Detector -->
+  <url>
+    <loc>https://animalvox.ai/app/detect</loc>
+    <lastmod>2026-11-03T00:00:00+00:00</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.85</priority>
+  </url>
+
+  <!-- Longitudinal Health & Vocal Biomarkers -->
+  <url>
+    <loc>https://animalvox.ai/app/health</loc>
+    <lastmod>2026-11-03T00:00:00+00:00</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.85</priority>
+  </url>
+
+  <!-- Breed Specific Bioacoustic Profiles -->
+  <url>
+    <loc>https://animalvox.ai/app/breed</loc>
+    <lastmod>2026-11-03T00:00:00+00:00</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.80</priority>
+  </url>
+
+  <!-- Emotional State & Valence Analyzer -->
+  <url>
+    <loc>https://animalvox.ai/app/emotions</loc>
+    <lastmod>2026-11-03T00:00:00+00:00</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.80</priority>
+  </url>
+
+  <!-- Bioacoustic History & Spectrogram Archive -->
+  <url>
+    <loc>https://animalvox.ai/app/history</loc>
+    <lastmod>2026-11-03T00:00:00+00:00</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.70</priority>
+  </url>
+
+  <!-- Secure Portal / Sign In -->
+  <url>
+    <loc>https://animalvox.ai/login</loc>
+    <lastmod>2026-11-03T00:00:00+00:00</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.70</priority>
+  </url>
+
+</urlset>

@@ -47,7 +47,7 @@ class AudioConfig:
     hop_length: int = 160             # 10ms hop at 16kHz
     fmin: int = 50                    # Minimum frequency (Hz)
     fmax: int = 8000                  # Maximum frequency (Hz)
-    top_db: int = 20                  # Silence threshold for noise gate
+    top_db: int = 40                  # Silence threshold for noise gate (prevents truncating barks/meows)
     max_duration: int = 60            # Maximum recording duration (seconds)
 
     @property
@@ -97,7 +97,7 @@ class AntiSpoofingConfig:
     # Decision thresholds
     spoof_rejection_threshold: float = 0.70   # Reject if P(human) > 0.70
     formant_match_tolerance_hz: float = 150.0  # Hz tolerance for formant matching
-    min_audio_duration_sec: float = 0.5  # Minimum clip length for spoof check
+    min_audio_duration_sec: float = 0.15  # Minimum clip length for spoof check
 
     # ECAPA-TDNN embedding dimension
     ecapa_embed_dim: int = 192
@@ -607,7 +607,7 @@ class InferenceConfig:
     # A translation is a concise behavioural interpretation, not creative
     # prose.  Keep sampling and output length constrained accordingly.
     groq_max_tokens: int = 1024
-    groq_temperature: float = 0.2
+    groq_temperature: float = 0.65
 
     # Performance
     max_inference_time: float = 3.0  # seconds

@@ -208,6 +208,12 @@ class HealthFlagClassifier(nn.Module):
                 nn.Linear(hidden_dim, num_flags),
             )
 
+    def forward_logits(self, x: torch.Tensor) -> torch.Tensor:
+        """Returns raw un-squashed logits for BCEWithLogitsLoss training."""
+        if hasattr(self.classifier, "forward_logits"):
+            return self.classifier.forward_logits(x)
+        return self.classifier(x)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Returns sigmoid probabilities for each health flag."""
         out = self.classifier(x)
@@ -456,6 +462,18 @@ class HealthMonitor:
 
         # Build alerts
         alerts = []
+        # Calibrated Clinical Operating Thresholds (Youden's J ROC Optimization)
+        CLINICAL_THRESHOLDS = {
+            "H01": 0.55,  # Acute Pain / High-Pitch Distress — high sensitivity priority
+            "H02": 0.65,  # Chronic Discomfort / Low Whimper
+            "H03": 0.68,  # Vocal Fatigue / Hoarseness
+            "H04": 0.65,  # Laryngeal Dysfunction
+            "H05": 0.60,  # Respiratory Distress / Heat Stress
+            "H06": 0.62,  # Stridor / Wheezing / Cough
+            "H07": 0.72,  # Cognitive Dysfunction — requires high certainty
+            "H08": 0.68,  # Separation Anxiety
+        }
+
         flag_ids = list(HEALTH_FLAGS.keys())
         for i, flag_id in enumerate(flag_ids):
             flag_info = HEALTH_FLAGS[flag_id]
@@ -466,8 +484,9 @@ class HealthMonitor:
 
             prob = float(flag_probs[i])
 
-            # Confidence gating
-            if prob < self.config.flag_confidence_threshold:
+            # Confidence gating with flag-specific clinical threshold
+            threshold = CLINICAL_THRESHOLDS.get(flag_id, self.config.flag_confidence_threshold)
+            if prob < threshold:
                 continue
 
             # Baseline deviation gating

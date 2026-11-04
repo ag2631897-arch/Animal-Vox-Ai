@@ -6,23 +6,22 @@ import { Shimmer } from '../ui/SkeletonCard'
 import SonarRings from '../ui/SonarRings'
 import WaveformBars from '../ui/WaveformBars'
 import ConfidenceBar from '../ui/ConfidenceBar'
-import RetroDataPanel from '../ui/RetroDataPanel'
 import DetectionOverlay from '../ui/DetectionOverlay'
 import AudioDropZone from '../ui/AudioDropZone'
 import AutoSpeciesToggle from '../ui/AutoSpeciesToggle'
+import { SpeciesMark } from '../ui/SpeciesMark'
 import { useAudioRecorder } from '../../hooks/useAudioRecorder'
 import { useAppStore } from '../../store/useAppStore'
 import { createSpeechUtterance } from '../../hooks/speech'
 import { translateAudio } from '../../lib/api'
 import { preAnalyzeAudio, classifyDetectionResult } from '../../hooks/useAudioAnalyzer'
+import { readableSignal, readableSpecies } from '../../lib/labels'
 
 function formatTime(s) {
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 }
 
-function displayBehavior(result) {
-  return result?.vocalization_type || result?.behaviors?.[0]?.name?.replaceAll('_', ' ') || 'Behavior signal'
-}
+function displayBehavior(result) { return readableSignal(result?.vocalization_type || result?.behaviors?.[0]?.name) }
 
 /**
  * Quick Translate – no pet profile required.
@@ -34,13 +33,19 @@ export default function QuickTranslate() {
   const speed = useAppStore((s) => s.speed)
   const autoDetect = useAppStore((s) => s.autoSpeciesDetection)
   const toggleAutoDetect = useAppStore((s) => s.toggleAutoSpeciesDetection)
+  const [selectedSpecies, setSelectedSpecies] = useState('dogs')
+  const autoDetectRef = useRef(autoDetect)
+  const selectedSpeciesRef = useRef(selectedSpecies)
+
+  useEffect(() => { autoDetectRef.current = autoDetect }, [autoDetect])
+  useEffect(() => { selectedSpeciesRef.current = selectedSpecies }, [selectedSpecies])
 
   const [analysis, setAnalysis] = useState(null)
-  const [rawOpen, setRawOpen] = useState(false)
   const [saved, setSaved] = useState(false)
   const [speaking, setSpeaking] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [detectionType, setDetectionType] = useState(null)
+  const [detectedAnimal, setDetectedAnimal] = useState('')
   const [uploadedFileName, setUploadedFileName] = useState('')
   const [visibleWords, setVisibleWords] = useState(0)
   const [typewriterDone, setTypewriterDone] = useState(false)
@@ -50,15 +55,16 @@ export default function QuickTranslate() {
 
   const analyzeRecording = useCallback(async ({ blob, fileName }) => {
     setDetectionType(null)
+    setDetectedAnimal('')
     setAnalysis(null)
     setVisibleWords(0)
     setTypewriterDone(false)
     hasAutoSpokenRef.current = false
     setUploadedFileName(fileName || '')
 
-    const preCheck = await preAnalyzeAudio(blob)
-    if (preCheck.type === 'no_animal') {
-      setDetectionType('no_animal')
+    const preCheck = await preAnalyzeAudio(blob, fileName)
+    if (preCheck.type === 'no_animal' || preCheck.type === 'music_detected') {
+      setDetectionType(preCheck.type)
       throw new Error(preCheck.reason || 'No animal vocalizations detected.')
     }
 
@@ -67,7 +73,7 @@ export default function QuickTranslate() {
       result = await translateAudio({
         audio: blob,
         fileName,
-        species: '', // always auto-detect in quick translate
+        species: autoDetectRef.current ? '' : selectedSpeciesRef.current,
         petId: null,
       })
     } catch (err) {
@@ -79,21 +85,21 @@ export default function QuickTranslate() {
     if (result.error) {
       const det = classifyDetectionResult(result) || 'no_animal'
       setDetectionType(det)
+      setDetectedAnimal(result.detected_animal || '')
       throw new Error(result.rejection_reason || result.message || 'Could not translate.')
     }
 
     setAnalysis(result)
-    setRawOpen(false)
     setSaved(false)
     addTranslation({
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       createdAt: new Date().toISOString(),
       petId: '',
-      petName: result.species || 'Unknown animal',
-      emoji: result.species_emoji || '🐾',
+      petName: result.species ? (result.species.charAt(0).toUpperCase() + result.species.slice(1)) : 'Unknown animal',
+      emoji: '',
       translation: result.translation,
       behavior: displayBehavior(result),
-      confidence: result.behaviors?.[0]?.score || 0,
+      confidence: result.behaviors?.[0]?.score ?? null,
       result,
     })
   }, [addTranslation])
@@ -185,14 +191,55 @@ export default function QuickTranslate() {
 
           <AudioDropZone onFile={chooseFile} disabled={isProcessing || isRecording} audioUrl={recorder.audioUrl} fileName={uploadedFileName} />
           <AutoSpeciesToggle enabled={autoDetect} onToggle={toggleAutoDetect} />
-          <p className="inline-note">Species will be detected automatically from the audio.</p>
+          {autoDetect ? (
+            <p className="inline-note">Species will be detected automatically from the audio.</p>
+          ) : (
+            <div className="manual-species-select" style={{ marginTop: '10px', width: '100%' }}>
+              <p className="inline-note" style={{ marginBottom: '8px' }}>Select species mode:</p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' }}>
+                {[
+                  { id: 'dogs', label: 'Dog' },
+                  { id: 'cats', label: 'Cat' },
+                  { id: 'birds', label: 'Bird' },
+                  { id: 'whales', label: 'Whale' },
+                  { id: 'dolphins', label: 'Dolphin' },
+                  { id: 'frogs', label: 'Frog' },
+                ].map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => setSelectedSpecies(s.id)}
+                    style={{
+                      padding: '7px 4px',
+                      borderRadius: '8px',
+                      border: selectedSpecies === s.id ? '1px solid #10B981' : '1px solid rgba(255,255,255,0.08)',
+                      background: selectedSpecies === s.id ? 'rgba(16,185,129,0.18)' : 'rgba(255,255,255,0.03)',
+                      color: selectedSpecies === s.id ? '#10B981' : '#94A3B8',
+                      fontSize: '12px',
+                      fontWeight: selectedSpecies === s.id ? '600' : '400',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {recorder.error && !detectionType && <p className="inline-note error-note" role="alert">{recorder.error}</p>}
         </section>
 
         {/* Detection Overlays */}
         <AnimatePresence>
-          {detectionType && <DetectionOverlay type={detectionType} onDismiss={() => setDetectionType(null)} />}
+          {detectionType && (
+            <DetectionOverlay
+              type={detectionType}
+              animalName={detectedAnimal}
+              onDismiss={() => { setDetectionType(null); setDetectedAnimal('') }}
+            />
+          )}
         </AnimatePresence>
 
         {/* ─── Right: Result ─── */}
@@ -212,9 +259,14 @@ export default function QuickTranslate() {
             <motion.div key="res" className="result-column" initial={{ opacity: 0, y: 12, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.28 }}>
               <GlassCard className="result-card">
                 <div className="result-owner">
-                  <span>{analysis.species_emoji || '🐾'} {analysis.species || 'Animal'}</span>
+                  <span><SpeciesMark species={analysis.species} size={16} /> {readableSpecies(analysis.species, 'Animal')}</span>
                   <small>Probable meaning; not a literal translation.</small>
                 </div>
+                {Boolean(analysis.human_speech_removed) && (
+                  <div className="human-removed-pill">
+                    <span>Human speech was removed before interpretation.</span>
+                  </div>
+                )}
                 <div className="translation-name">Interpretation<span>:</span></div>
                 <p className="translation-copy">
                   {translationWords.map((word, i) => (
@@ -236,9 +288,6 @@ export default function QuickTranslate() {
                   <div className="metric-item"><span>INTENSITY</span><div className="metric-value">{Math.round((analysis.intensity || 0) * 100)}%</div><ConfidenceBar value={analysis.intensity || 0} color="var(--accent-2)" /></div>
                   <div className="metric-item"><span>URGENCY</span><div className="metric-value amber-text">{Math.round((analysis.urgency || 0) * 100)}%</div><ConfidenceBar value={analysis.urgency || 0} color="var(--accent-3)" /></div>
                 </div>
-
-                <button className="retro-toggle" onClick={() => setRawOpen((v) => !v)} aria-expanded={rawOpen}>{rawOpen ? '< Hide >' : '< View Raw Data >'}</button>
-                <AnimatePresence>{rawOpen && <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.25 }}><RetroDataPanel result={analysis} /></motion.div>}</AnimatePresence>
 
                 <div className="result-actions">
                   <button className={`ghost-action ${saved ? 'saved' : ''}`} onClick={() => setSaved((v) => !v)}>{saved ? <Check size={15} /> : <Save size={15} />}{saved ? 'Saved' : 'Save'}</button>

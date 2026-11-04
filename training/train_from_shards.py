@@ -30,6 +30,7 @@ import logging
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from collections import Counter
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -41,8 +42,10 @@ logger = logging.getLogger("ShardTrainer")
 try:
     import torch
     import torch.nn as nn
+    import torch.nn.functional as F
     import torch.optim as optim
-    from torch.utils.data import Dataset, DataLoader, ConcatDataset
+    from torch.utils.data import Dataset, DataLoader, ConcatDataset, WeightedRandomSampler
+    from torch.optim.swa_utils import AveragedModel, SWALR
     import numpy as np
     TORCH_AVAILABLE = True
 except ImportError:
@@ -83,6 +86,12 @@ class FeatureShardDataset(Dataset):
         
         all_embeddings = []
         all_labels = []
+        all_multilabel_targets = []
+        counts_per_class = Counter()
+        counts_per_species_animal = Counter()
+        max_per_species = 25000
+        max_spoof = 36000
+        max_clean = 36000
         
         for npz_path in npz_paths:
             try:
@@ -100,14 +109,16 @@ class FeatureShardDataset(Dataset):
                     name_lower = npz_path.name.lower()
                     if "cat" in name_lower:
                         dataset_species = "cats"
-                    elif "dog" in name_lower or "barkopedia" in name_lower:
+                    elif "dog" in name_lower or "barkopedia" in name_lower or "beans" in name_lower:
                         dataset_species = "dogs"
-                    elif "bird" in name_lower or "avian" in name_lower:
+                    elif "bird" in name_lower or "avian" in name_lower or "birb" in name_lower:
                         dataset_species = "birds"
                     elif "frog" in name_lower or "rfcx" in name_lower:
                         dataset_species = "frogs"
                     elif "marine" in name_lower or "watkins" in name_lower:
                         dataset_species = "multi"
+                    elif "audioset_stream" in name_lower or "musan" in name_lower or "demand" in name_lower:
+                        dataset_species = "noise"
                 
                 if module_name == "animal_detector":
                     if dataset_species == "multi":
@@ -115,31 +126,38 @@ class FeatureShardDataset(Dataset):
                         valid_indices = []
                         for idx, l in enumerate(labels):
                             s = str(l).lower()
+                            sp = None
                             if "frog" in s:
-                                shard_labels.append("frogs")
-                                valid_indices.append(idx)
+                                sp = "frogs"
                             elif any(w in s for w in ("bird", "crow", "rooster", "hen", "finch")):
-                                shard_labels.append("birds")
-                                valid_indices.append(idx)
+                                sp = "birds"
                             elif "dog" in s:
-                                shard_labels.append("dogs")
-                                valid_indices.append(idx)
+                                sp = "dogs"
                             elif "cat" in s:
-                                shard_labels.append("cats")
-                                valid_indices.append(idx)
+                                sp = "cats"
                             elif "whale" in s or "orca" in s:
-                                shard_labels.append("whales")
-                                valid_indices.append(idx)
+                                sp = "whales"
                             elif "dolphin" in s:
-                                shard_labels.append("dolphins")
+                                sp = "dolphins"
+                            if sp and counts_per_class[sp] < max_per_species:
+                                shard_labels.append(sp)
                                 valid_indices.append(idx)
+                                counts_per_class[sp] += 1
                         if len(valid_indices) == 0:
                             continue
                         embeddings = embeddings[valid_indices]
                         all_labels.extend(shard_labels)
+                        all_embeddings.append(embeddings)
                     elif dataset_species in ("dogs", "cats", "birds", "frogs", "whales", "dolphins"):
-                        shard_labels = [dataset_species] * len(embeddings)
+                        sp = dataset_species
+                        if counts_per_class[sp] >= max_per_species:
+                            continue
+                        take_n = min(len(embeddings), max_per_species - counts_per_class[sp])
+                        embeddings = embeddings[:take_n]
+                        shard_labels = [sp] * take_n
+                        counts_per_class[sp] += take_n
                         all_labels.extend(shard_labels)
+                        all_embeddings.append(embeddings)
                     else:
                         continue
                 elif module_name == "breed_acoustic":
@@ -156,6 +174,7 @@ class FeatureShardDataset(Dataset):
                         continue
                     embeddings = embeddings[valid_indices]
                     all_labels.extend(shard_labels)
+                    all_embeddings.append(embeddings)
                 elif module_name == "emotion_classifier":
                     EMOTIONS = {"contentment", "brushing", "neutral_rest", "calm", "stress_acute",
                                 "isolation", "alarm", "pain", "stress_chronic", "anxiety", "hunger",
@@ -173,31 +192,79 @@ class FeatureShardDataset(Dataset):
                         continue
                     embeddings = embeddings[valid_indices]
                     all_labels.extend(shard_labels)
+                    all_embeddings.append(embeddings)
                 elif module_name == "anti_spoofing":
-                    if dataset_species == "multi":
-                        shard_labels = []
-                        valid_indices = []
-                        for idx, l in enumerate(labels):
-                            s = str(l).lower()
-                            # Non-animal hard negative contrast: speech, human sounds, music, ambient soundscapes (Rule 3)
-                            if any(w in s for w in ("human", "speech", "baby", "sneeze", "cough", "footstep", "laugh", "snore", "breath", "ambient", "noise", "music", "traffic")):
+                    shard_labels = []
+                    valid_indices = []
+                    for idx, l in enumerate(labels):
+                        s = str(l).lower()
+                        # Human speech, vocal imitation, and ambient soundscapes -> Class 1 (Spoof/Non-Animal)
+                        if any(w in s for w in ("human", "speech", "baby", "sneeze", "cough", "footstep", "laugh", "snore", "breath", "ambient", "noise", "traffic")) or dataset_species in ("human", "human_imitation"):
+                            if counts_per_class["1"] < max_spoof:
                                 shard_labels.append("1")
                                 valid_indices.append(idx)
-                            # Real animal vocalizations
-                            elif any(w in s for w in ("dog", "cat", "bird", "frog", "whale", "dolphin", "wildlife", "animal", "bark", "purr", "howl", "growl", "chirp", "croak")):
+                                counts_per_class["1"] += 1
+                        # Genuine animal vocalizations across all species -> Class 0
+                        elif any(w in s for w in ("dog", "cat", "bird", "frog", "whale", "dolphin", "wildlife", "animal", "bark", "purr", "howl", "growl", "chirp", "croak")) or dataset_species in ("dogs", "cats", "birds", "frogs", "whales", "dolphins"):
+                            # Per-species sub-cap to ensure all species are represented in genuine animal class
+                            sp_group = dataset_species if dataset_species in ("dogs", "cats", "birds", "frogs") else "other_animal"
+                            if counts_per_species_animal[sp_group] < 8000 and counts_per_class["0"] < max_clean:
                                 shard_labels.append("0")
                                 valid_indices.append(idx)
-                        if len(valid_indices) == 0:
-                            continue
-                        embeddings = embeddings[valid_indices]
-                        all_labels.extend(shard_labels)
-                    else:
-                        is_spoof = 1 if dataset_species in ("human_imitation", "human") else 0
-                        all_labels.extend([str(is_spoof)] * len(embeddings))
+                                counts_per_class["0"] += 1
+                                counts_per_species_animal[sp_group] += 1
+                    if len(valid_indices) == 0:
+                        continue
+                    embeddings = embeddings[valid_indices]
+                    all_labels.extend(shard_labels)
+                    all_embeddings.append(embeddings)
+                elif module_name == "health_monitor":
+                    # Ingest canine and feline acoustic features and evaluate clinical distress flags
+                    pros = embeddings[:, 256:]
+                    shard_targets = np.zeros((len(embeddings), 8), dtype=np.float32)
+                    for i in range(len(embeddings)):
+                        f0 = float(pros[i, 0])
+                        f0_std = float(pros[i, 1])
+                        f0_rng = float(pros[i, 2])
+                        hnr = float(pros[i, 3])
+                        zcr = float(pros[i, 4])
+                        cent = float(pros[i, 5])
+                        dur = float(pros[i, 7])
+                        rms = float(pros[i, 8])
+                        rate = float(pros[i, 9])
+                        lbl = str(labels[i]).lower() if i < len(labels) else ""
+
+                        # H01: Acute Pain / High-Pitch Distress
+                        if (f0 > 750 and rms > 0.15) or any(w in lbl for w in ("pain", "cry", "scream", "injury")):
+                            shard_targets[i, 0] = 1.0
+                        # H02: Chronic Discomfort / Low Whimper
+                        if (rate > 0.8 and rms < 0.14 and (180 < f0 < 550) and dur < 1.4) or any(w in lbl for w in ("whimper", "chronic", "moan", "whine", "discomfort")):
+                            shard_targets[i, 1] = 1.0
+                        # H03: Vocal Fatigue / Hoarseness
+                        if hnr < 6.5 and zcr > 0.12:
+                            shard_targets[i, 2] = 1.0
+                        # H04: Laryngeal Dysfunction
+                        if hnr < 4.0 and zcr > 0.16:
+                            shard_targets[i, 3] = 1.0
+                        # H05: Panting / Respiratory Distress
+                        if zcr > 0.15 and hnr < 8.0 and dur > 1.0:
+                            shard_targets[i, 4] = 1.0
+                        # H06: Stridor / Wheezing / Cough
+                        if zcr > 0.18 and cent > 2200 and hnr < 7.0:
+                            shard_targets[i, 5] = 1.0
+                        # H07: Cognitive Dysfunction / Wandering Whine
+                        if (dur > 1.8 and f0_rng < 55 and f0 > 240) or any(w in lbl for w in ("night", "howl", "wandering", "disoriented")):
+                            shard_targets[i, 6] = 1.0
+                        # H08: Separation Anxiety
+                        if rate > 2.0 and f0 > 450 and f0_std > 60:
+                            shard_targets[i, 7] = 1.0
+
+                    all_multilabel_targets.append(shard_targets)
+                    all_labels.extend(["health"] * len(embeddings))
+                    all_embeddings.append(embeddings)
                 else:
                     all_labels.extend(labels.tolist())
-                
-                all_embeddings.append(embeddings)
+                    all_embeddings.append(embeddings)
                 logger.info(f"Loaded {len(embeddings)} samples from {npz_path.name} (species: {dataset_species})")
             except Exception as e:
                 logger.warning(f"Failed to load {npz_path}: {e}")
@@ -274,11 +341,13 @@ class FeatureShardDataset(Dataset):
         
         # Convert string labels to indices
         if is_multilabel:
-            # For multi-label, create binary vectors
-            self.targets = np.zeros((len(all_labels), num_classes), dtype=np.float32)
-            for i, label in enumerate(all_labels):
-                idx = self.label_to_idx.get(str(label), 0)
-                self.targets[i, idx] = 1.0
+            if all_multilabel_targets:
+                self.targets = np.concatenate(all_multilabel_targets, axis=0)
+            else:
+                self.targets = np.zeros((len(all_labels), num_classes), dtype=np.float32)
+                for i, label in enumerate(all_labels):
+                    idx = self.label_to_idx.get(str(label), 0)
+                    self.targets[i, idx] = 1.0
         else:
             self.targets = np.array(
                 [self.label_to_idx.get(str(label), 0) for label in all_labels],
@@ -289,10 +358,7 @@ class FeatureShardDataset(Dataset):
         return len(self.embeddings)
     
     def __getitem__(self, idx):
-        if self.module_name == "animal_detector":
-            x = torch.from_numpy(self.embeddings[idx, :256])
-        else:
-            x = torch.from_numpy(self.embeddings[idx])
+        x = torch.from_numpy(self.embeddings[idx])
         if self.is_multilabel:
             y = torch.from_numpy(self.targets[idx])
         else:
@@ -356,26 +422,32 @@ def discover_feature_shards(
         logger.warning(f"Features directory not found: {features_dir}")
         return []
     
+    if species_filter is None and module_name in MODULE_CONFIGS:
+        species_filter = MODULE_CONFIGS[module_name].get("species_filter")
+
     npz_files = sorted(features_dir.glob("features_*.npz"))
     
     from training.gdrive_shard_manager import DATASET_REGISTRY
     filtered = []
     for npz_path in npz_files:
         dataset_id = npz_path.stem.replace("features_", "")
-        ds_info = DATASET_REGISTRY.get(dataset_id, {})
+        base_id = dataset_id.split("_part_")[0]
+        ds_info = DATASET_REGISTRY.get(dataset_id, DATASET_REGISTRY.get(base_id, {}))
         ds_species = ds_info.get("species", "unknown")
         if ds_species == "unknown":
             name_lower = npz_path.name.lower()
             if "cat" in name_lower:
                 ds_species = "cats"
-            elif "dog" in name_lower or "barkopedia" in name_lower:
+            elif "dog" in name_lower or "barkopedia" in name_lower or "beans" in name_lower:
                 ds_species = "dogs"
-            elif "bird" in name_lower or "avian" in name_lower:
+            elif "bird" in name_lower or "avian" in name_lower or "birb" in name_lower:
                 ds_species = "birds"
             elif "frog" in name_lower or "rfcx" in name_lower:
                 ds_species = "frogs"
             elif "marine" in name_lower or "watkins" in name_lower or "wildlife" in name_lower:
                 ds_species = "multi"
+            elif "audioset_stream" in name_lower or "musan" in name_lower or "demand" in name_lower:
+                ds_species = "noise"
         ds_modules = ds_info.get("target_modules", [])
         
         # Check species filter
@@ -425,23 +497,43 @@ def build_model(module_name: str, input_dim: int, device: str):
     elif module_name == "animal_detector":
         from models.animal_detector.detector import SpeciesGroupClassifier
         model = SpeciesGroupClassifier(
-            input_dim=256,
+            input_dim=input_dim,
             num_species=cfg["num_classes"],
         )
     elif module_name == "anti_spoofing":
-        model = nn.Sequential(
-            nn.Linear(input_dim, 256),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(128, 2),
+        from models.dual_stream_classifier import EnhancedClassifier
+        model = EnhancedClassifier(
+            input_dim=input_dim,
+            hidden_dim=256,
+            num_classes=2,
+            num_residual_blocks=3,
+            dropout=0.20,
+            is_multilabel=False,
         )
     else:
         raise ValueError(f"Unknown module: {module_name}")
-    
+
     return model.to(device)
+
+
+class ClassBalancedFocalLoss(nn.Module):
+    """
+    Focal Loss with class-frequency weighting to overcome heavy majority-class bias.
+    Focuses gradient updates on hard-to-classify samples and minority species (dolphins, whales, frogs).
+    """
+    def __init__(self, weight: Optional[torch.Tensor] = None, gamma: float = 1.8, label_smoothing: float = 0.02):
+        super().__init__()
+        self.weight = weight
+        self.gamma = gamma
+        self.label_smoothing = label_smoothing
+
+    def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        ce_loss = F.cross_entropy(
+            inputs, targets, weight=self.weight, label_smoothing=self.label_smoothing, reduction="none"
+        )
+        pt = torch.exp(-ce_loss)
+        focal_loss = ((1.0 - pt) ** self.gamma) * ce_loss
+        return focal_loss.mean()
 
 
 def train_module(
@@ -491,11 +583,25 @@ def train_module(
     # Adaptive batch sizing: 256 for large datasets, 64 for smaller datasets
     effective_batch_size = min(batch_size, max(32, train_size // 4)) if train_size < 10000 else batch_size
 
-    train_loader = DataLoader(
-        train_ds, batch_size=effective_batch_size, shuffle=True,
-        drop_last=(train_size > effective_batch_size),
-        num_workers=0, pin_memory=False,
-    )
+    if module_name == "animal_detector":
+        counts_dict = Counter(train_targets.tolist())
+        total_train = len(train_targets)
+        # Smooth power weighting (0.35) gives minority species healthy representation without over-repetition artifacts
+        class_weights_dict = {c: (total_train / max(count, 1)) ** 0.35 for c, count in counts_dict.items()}
+        mean_w = sum(class_weights_dict.values()) / max(len(class_weights_dict), 1)
+        sample_weights = torch.DoubleTensor([class_weights_dict[int(t)] / mean_w for t in train_targets])
+        sampler = WeightedRandomSampler(sample_weights, len(sample_weights), replacement=True)
+        train_loader = DataLoader(
+            train_ds, batch_size=effective_batch_size, sampler=sampler,
+            drop_last=(train_size > effective_batch_size),
+            num_workers=0, pin_memory=False,
+        )
+    else:
+        train_loader = DataLoader(
+            train_ds, batch_size=effective_batch_size, shuffle=True,
+            drop_last=(train_size > effective_batch_size),
+            num_workers=0, pin_memory=False,
+        )
     val_loader = DataLoader(
         val_ds, batch_size=effective_batch_size * 2, shuffle=False,
         num_workers=0, pin_memory=False,
@@ -536,12 +642,15 @@ def train_module(
         active = counts > 0
         raw_w = (len(targets_tensor) / (active.sum() * counts[active])) ** 0.5
         weights[active] = raw_w / raw_w.mean()
-        criterion = nn.CrossEntropyLoss(weight=weights.to(device), label_smoothing=0.03)
+        criterion = nn.CrossEntropyLoss(weight=weights.to(device), label_smoothing=0.02)
         logger.info(f"⚖️ Applied Smart Active Class Weights: {weights.cpu().numpy().round(3).tolist()}")
     
-    # Cosine Annealing Learning Rate Schedule
+    # Cosine Annealing + SWA Learning Rate Schedule
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
+    swa_start = int(epochs * 0.70)
+    swa_model = AveragedModel(model).to(device)
+    swa_scheduler = SWALR(optimizer, swa_lr=5e-5)
     
     # Training loop
     history = {"train_loss": [], "val_loss": [], "val_acc": []}
@@ -556,7 +665,7 @@ def train_module(
             x_aug = x + torch.randn_like(x) * 0.015
             optimizer.zero_grad()
             if cfg["is_multilabel"]:
-                logits = model.network(x_aug) if hasattr(model, "network") else model(x_aug)
+                logits = model.forward_logits(x_aug) if hasattr(model, "forward_logits") else (model.network(x_aug) if hasattr(model, "network") else model(x_aug))
                 loss = criterion(logits, y)
             else:
                 out = model(x_aug)
@@ -567,9 +676,17 @@ def train_module(
             train_loss += loss.item() * len(x)
         
         avg_train_loss = train_loss / max(train_size, 1)
+
+        # Step LR / SWA
+        if epoch >= swa_start:
+            swa_model.update_parameters(model)
+            swa_scheduler.step()
+        else:
+            scheduler.step()
         
         # ── Validate ──
-        model.eval()
+        eval_model = swa_model if epoch >= swa_start else model
+        eval_model.eval()
         val_loss = 0.0
         correct = 0
         val_total = 0
@@ -578,14 +695,14 @@ def train_module(
             for x, y in val_loader:
                 x, y = x.to(device), y.to(device)
                 if cfg["is_multilabel"]:
-                    logits = model.network(x) if hasattr(model, "network") else model(x)
+                    logits = eval_model.forward_logits(x) if hasattr(eval_model, "forward_logits") else (eval_model.network(x) if hasattr(eval_model, "network") else eval_model(x))
                     loss = criterion(logits, y)
                     preds = (torch.sigmoid(logits) > 0.5).float()
                     # Per-flag Hamming accuracy
                     correct += (preds == y).float().sum().item()
                     val_total += y.numel()
                 else:
-                    out = model(x)
+                    out = eval_model(x)
                     loss = criterion(out, y)
                     preds = torch.argmax(out, dim=-1)
                     correct += (preds == y).sum().item()
@@ -595,28 +712,32 @@ def train_module(
         avg_val_loss = val_loss / max(val_total, 1)
         val_acc = correct / max(val_total, 1)
         
-        scheduler.step()
-        
         history["train_loss"].append(avg_train_loss)
         history["val_loss"].append(avg_val_loss)
         history["val_acc"].append(val_acc)
         
         # Log progress
-        lr_current = scheduler.get_last_lr()[0]
+        lr_current = optimizer.param_groups[0]["lr"]
+        swa_tag = " [SWA]" if epoch >= swa_start else ""
+        marker = ""
+        if val_acc > best_metric:
+            marker = f" ⭐ New Best: {val_acc:.2%}"
+
         logger.info(
             f"Epoch {epoch+1:03d}/{start_epoch+epochs} | "
             f"Train Loss: {avg_train_loss:.4f} | "
             f"Val Loss: {avg_val_loss:.4f} | "
             f"Val Acc: {val_acc:.2%} | "
-            f"LR: {lr_current:.2e}"
+            f"LR: {lr_current:.2e}{swa_tag}{marker}"
         )
         
         # Save best checkpoint
         metric = val_acc
         if metric >= best_metric:
             best_metric = metric
+            save_model = eval_model.module if hasattr(eval_model, "module") else eval_model
             save_checkpoint(
-                model=model,
+                model=save_model,
                 module_name=module_name,
                 epoch=epoch + 1,
                 optimizer=optimizer,
@@ -627,24 +748,13 @@ def train_module(
                     "best_metric": best_metric,
                 },
                 extra_meta={
-                    "description": f"Trained {module_name} from {len(npz_paths)} feature shards with smart weighting & jitter",
+                    "description": f"Trained {module_name} from {len(npz_paths)} feature shards with SWA & jitter",
                     "num_shards": len(npz_paths),
                     "total_samples": total,
                 }
             )
-            # Also save companion ECAPA checkpoint if anti_spoofing
-            if module_name == "anti_spoofing":
-                try:
-                    save_checkpoint(
-                        model=model,
-                        module_name="anti_spoofing_ecapa",
-                        epoch=epoch + 1,
-                        optimizer=optimizer,
-                        metrics={"val_accuracy": val_acc, "best_metric": best_metric},
-                        extra_meta={"description": "Trained anti-spoofing checkpoint"}
-                    )
-                except Exception:
-                    pass
+            logger.info(f"  ⭐ New best! Saved models/weights/{module_name}.pt (Acc: {val_acc:.2%})")
+
             logger.info(f"  ⭐ New best! Saved models/weights/{module_name}.pt (Acc: {val_acc:.2%})")
     
     print(f"\n🎉 {module_name} training complete! Best accuracy: {best_metric:.2%}")

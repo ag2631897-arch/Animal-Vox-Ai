@@ -164,10 +164,13 @@ class EnhancedClassifier(nn.Module):
             nn.Linear(hidden_dim // 2, num_classes),
         )
 
-    def forward(self, x):
+    def forward_logits(self, x: torch.Tensor) -> torch.Tensor:
         h = self.input_proj(x)
         h = self.residual_blocks(h)
-        logits = self.head(h)
+        return self.head(h)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        logits = self.forward_logits(x)
         if self.is_multilabel:
             return torch.sigmoid(logits)
         return logits

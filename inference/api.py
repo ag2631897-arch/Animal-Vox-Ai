@@ -18,19 +18,28 @@ import tempfile
 import base64
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 
-from fastapi import FastAPI, UploadFile, File, Form, Query, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, Query, HTTPException, Header, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from database.connection import init_db
+from database.auth import (
+    register_user, login_user, authenticate_google_user,
+    decode_access_token, get_user_by_id
+)
 
 import numpy as np
 
 from config import SPECIES_GROUPS, INFERENCE_CONFIG, STREAMING_CONFIG, MEDICAL_DISCLAIMER
 from inference.pipeline import AnimalVoxPipeline
+from inference.cache import bioacoustic_cache
+from inference.security import SecurityMiddleware, rate_limiter
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -46,12 +55,12 @@ def sanitize_for_json(obj):
         return {str(k): sanitize_for_json(v) for k, v in obj.items()}
     elif isinstance(obj, (list, tuple)):
         return [sanitize_for_json(v) for v in obj]
+    elif isinstance(obj, (np.bool_, bool)):
+        return bool(obj)
     elif isinstance(obj, (np.floating, float)):
         return 0.0 if np.isnan(obj) or np.isinf(obj) else float(obj)
     elif isinstance(obj, (np.integer, int)):
         return int(obj)
-    elif isinstance(obj, (np.bool_, bool)):
-        return bool(obj)
     elif isinstance(obj, np.ndarray):
         return obj.tolist()
     return obj
@@ -63,7 +72,40 @@ app = FastAPI(
     version="1.1.0"
 )
 
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+cors_env = os.getenv("CORS_ORIGINS", "")
+allowed_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "https://animalvox.ai",
+]
+if cors_env:
+    for origin in cors_env.split(","):
+        origin_clean = origin.strip()
+        if origin_clean and origin_clean not in allowed_origins:
+            allowed_origins.append(origin_clean)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.add_middleware(SecurityMiddleware)
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception on {request.url.path}: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "internal_server_error",
+            "message": "A transient bioacoustic processing error occurred. Please retry.",
+        }
+    )
 
 pipeline = AnimalVoxPipeline(
     device="cpu",
@@ -72,6 +114,12 @@ pipeline = AnimalVoxPipeline(
 
 @app.on_event("startup")
 async def startup_event():
+    try:
+        init_db()
+        logger.info("NeonDB PostgreSQL connected and initialized.")
+    except Exception as e:
+        logger.warning(f"NeonDB startup initialization warning: {e}")
+
     logger.info("Pre-loading models and intelligence modules...")
     pipeline.load_models()
     pipeline.load_modules()
@@ -101,7 +149,7 @@ async def translate_audio(
     species: str = Form(None),           # None = auto-detect
     audio_format: str = Form("wav"),
     pet_id: str = Form(None),            # Optional pet profile ID
-    enable_modules: Optional[bool] = Form(True),   # Enable intelligence modules
+    enable_modules: Optional[Any] = Form(True),   # Enable intelligence modules
 ):
     """
     Translate animal audio to human language.
@@ -115,13 +163,33 @@ async def translate_audio(
     """
     species = species or None
     if species and species not in SPECIES_GROUPS:
-        raise HTTPException(400, f"Unsupported species: {species}. Choose from: {list(SPECIES_GROUPS.keys())}")
+        return {
+            "error": "unsupported_species",
+            "species_supported": False,
+            "detected_animal": species,
+            "translation": "",
+            "message": f"Species Not Supported Yet: {species} is not in our translation database.",
+            "rejection_reason": f"Unsupported species: {species}. Supported: {list(SPECIES_GROUPS.keys())}",
+            "processing_time_ms": 0,
+        }
 
-    modules_enabled = True if enable_modules is None else bool(enable_modules)
+    if enable_modules is None:
+        modules_enabled = True
+    elif isinstance(enable_modules, bool):
+        modules_enabled = enable_modules
+    else:
+        modules_enabled = str(enable_modules).strip().lower() not in ('false', '0', 'no', 'null', 'undefined')
 
     try:
+        raw_bytes = None
         if audio:
             contents = await audio.read()
+            raw_bytes = contents
+            cache_key = bioacoustic_cache.compute_key(raw_bytes, species, pet_id)
+            cached_res = bioacoustic_cache.get(cache_key)
+            if cached_res:
+                return sanitize_for_json(cached_res)
+
             fmt = audio.filename.rsplit(".", 1)[-1] if audio.filename else "wav"
             with tempfile.NamedTemporaryFile(suffix=f".{fmt}", delete=False) as tmp:
                 tmp.write(contents)
@@ -129,7 +197,8 @@ async def translate_audio(
             try:
                 result = await pipeline.translate(
                     audio_path=tmp_path, species=species,
-                    pet_id=pet_id, enable_modules=modules_enabled
+                    pet_id=pet_id, enable_modules=modules_enabled,
+                    filename=audio.filename
                 )
             finally:
                 if os.path.exists(tmp_path):
@@ -139,6 +208,12 @@ async def translate_audio(
                         pass
         elif audio_base64:
             audio_bytes = base64.b64decode(audio_base64)
+            raw_bytes = audio_bytes
+            cache_key = bioacoustic_cache.compute_key(raw_bytes, species, pet_id)
+            cached_res = bioacoustic_cache.get(cache_key)
+            if cached_res:
+                return sanitize_for_json(cached_res)
+
             result = await pipeline.translate(
                 audio_bytes=audio_bytes, audio_format=audio_format,
                 species=species, pet_id=pet_id, enable_modules=enable_modules
@@ -148,7 +223,10 @@ async def translate_audio(
 
         # Remove non-serializable data and sanitize all numpy primitives
         result.pop("mel_spectrogram", None)
-        return sanitize_for_json(result)
+        sanitized = sanitize_for_json(result)
+        if raw_bytes and not result.get("error"):
+            bioacoustic_cache.set(cache_key, sanitized)
+        return sanitized
 
     except Exception as e:
         logger.error(f"Translation error: {e}", exc_info=True)
@@ -165,31 +243,18 @@ async def translate_audio_stream(
 ):
     """
     Streaming translation via Server-Sent Events (SSE).
-
-    Returns a text/event-stream with word-by-word translation tokens
-    for real-time karaoke-style display with synchronized TTS.
-
-    Event types:
-    - metadata: species, emoji, soundscape
-    - translation_start: translation begins
-    - token: individual word/token
-    - phrase: buffered phrase for TTS utterance
-    - translation_end: translation complete
-    - health: health monitoring results
-    - emotion: emotional state results
-    - wellbeing: wellbeing composite score
-    - human_detected: human imitation rejected
-    - no_animal: no animal detected
-    - done: processing complete with timing
-    - error: error occurred
     """
     species = species or None
     if species and species not in SPECIES_GROUPS:
-        raise HTTPException(400, f"Unsupported species: {species}")
+        async def unsupported_generator():
+            yield f"data: {json.dumps({'type': 'unsupported_species', 'species_supported': False, 'message': f'Unsupported species: {species}'})}\n\n"
+        return StreamingResponse(unsupported_generator(), media_type="text/event-stream")
 
     async def event_generator():
         try:
+            filename = None
             if audio:
+                filename = audio.filename
                 contents = await audio.read()
                 fmt = audio.filename.rsplit(".", 1)[-1] if audio.filename else "wav"
                 with tempfile.NamedTemporaryFile(suffix=f".{fmt}", delete=False) as tmp:
@@ -205,7 +270,7 @@ async def translate_audio_stream(
                 return
 
             async for event in pipeline.translate_stream(
-                audio_path=audio_path, species=species, pet_id=pet_id
+                audio_path=audio_path, species=species, pet_id=pet_id, filename=filename
             ):
                 yield f"data: {json.dumps(event)}\n\n"
 
@@ -314,6 +379,171 @@ async def get_wellbeing(pet_id: str):
         },
         "recommendations": report.recommendations,
     }
+
+
+# ── Authentication Endpoints (NeonDB PostgreSQL + Google OAuth) ──
+class SignupRequest(BaseModel):
+    name: str
+    email: str
+    password: str
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+class GoogleAuthRequest(BaseModel):
+    credential: Optional[str] = None
+    user_info: Optional[Dict[str, Any]] = None
+    access_token: Optional[str] = None
+    code: Optional[str] = None
+    redirect_uri: Optional[str] = None
+
+def _read_google_credentials() -> Dict[str, str]:
+    """Helper to dynamically read Google OAuth credentials from .env files or environment."""
+    from dotenv import dotenv_values
+    candidates = {}
+    
+    # 1. Root .env
+    root_env_path = PROJECT_ROOT / ".env"
+    if root_env_path.exists():
+        candidates.update(dotenv_values(root_env_path))
+    
+    # 2. Frontend .env
+    fe_env_path = PROJECT_ROOT / "frontend" / ".env"
+    if fe_env_path.exists():
+        candidates.update(dotenv_values(fe_env_path))
+
+    # Helper to clean strings
+    def clean(val: Optional[str]) -> str:
+        if not val:
+            return ""
+        return val.strip().strip('"').strip("'").strip()
+
+    client_id = ""
+    client_secret = ""
+
+    # Check candidates case-insensitively
+    for k, v in candidates.items():
+        if not k or not v:
+            continue
+        k_upper = k.strip().upper()
+        if k_upper in ("GOOGLE_CLIENT_ID", "VITE_GOOGLE_CLIENT_ID", "CLIENT_ID", "GOOGLE_ID"):
+            client_id = clean(v)
+        elif k_upper in ("GOOGLE_CLIENT_SECRET", "VITE_GOOGLE_CLIENT_SECRET", "CLIENT_SECRET", "GOOGLE_SECRET"):
+            client_secret = clean(v)
+
+    # Check os.environ if not found
+    if not client_id:
+        for k in ("GOOGLE_CLIENT_ID", "VITE_GOOGLE_CLIENT_ID", "CLIENT_ID"):
+            val = os.getenv(k)
+            if val:
+                client_id = clean(val)
+                break
+
+    if not client_secret:
+        for k in ("GOOGLE_CLIENT_SECRET", "CLIENT_SECRET"):
+            val = os.getenv(k)
+            if val:
+                client_secret = clean(val)
+                break
+
+    return {"client_id": client_id, "client_secret": client_secret}
+
+@app.get("/api/v1/auth/config")
+async def api_auth_config():
+    """Return public authentication configuration like Google Client ID (never secrets)."""
+    creds = _read_google_credentials()
+    client_id = creds["client_id"]
+    return {
+        "google_client_id": client_id,
+        "has_google_client_id": bool(client_id),
+    }
+
+def _set_auth_cookie(response: Response, token: str):
+    """Set secure HTTP-only session cookie for authentication."""
+    secure_cookie = os.getenv("COOKIE_SECURE", "false").lower() in ("true", "1")
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=secure_cookie,
+        max_age=7 * 24 * 3600,
+        path="/",
+    )
+
+@app.post("/api/v1/auth/signup")
+async def api_signup(req: SignupRequest, response: Response):
+    """Register a new user account with NeonDB PostgreSQL and set auth cookie."""
+    res = register_user(req.name, req.email, req.password)
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("error", "Registration failed"))
+    if res.get("token"):
+        _set_auth_cookie(response, res["token"])
+    return res
+
+@app.post("/api/v1/auth/login")
+async def api_login(req: LoginRequest, response: Response):
+    """Log in with email and password verified against NeonDB PostgreSQL."""
+    res = login_user(req.email, req.password)
+    if not res.get("success"):
+        raise HTTPException(status_code=401, detail=res.get("error", "Invalid credentials"))
+    if res.get("token"):
+        _set_auth_cookie(response, res["token"])
+    return res
+
+@app.post("/api/v1/auth/google")
+async def api_google_auth(req: GoogleAuthRequest, response: Response):
+    """Log in or sign up with Google OAuth, returning is_new_user and setting auth cookie."""
+    res = authenticate_google_user(
+        credential=req.credential,
+        user_info=req.user_info,
+        access_token=req.access_token,
+        code=req.code,
+        redirect_uri=req.redirect_uri,
+    )
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("error", "Google authentication failed"))
+    if res.get("token"):
+        _set_auth_cookie(response, res["token"])
+    return res
+
+@app.post("/api/v1/auth/logout")
+async def api_logout(response: Response):
+    """Log out and revoke authentication cookie."""
+    response.delete_cookie(key="access_token", path="/")
+    return {"success": True, "message": "Logged out successfully"}
+
+@app.get("/api/v1/auth/me")
+async def api_get_me(request: Request, authorization: Optional[str] = Header(None)):
+    """Retrieve currently authenticated user profile from NeonDB via header or HTTP cookie."""
+    token = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.split(" ")[1]
+    elif request.cookies.get("access_token"):
+        token = request.cookies.get("access_token")
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header or cookie")
+    payload = decode_access_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    user = get_user_by_id(int(payload["sub"]))
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"success": True, "user": sanitize_for_json(user)}
+
+@app.get("/api/v1/cache/stats")
+async def api_cache_stats():
+    """Retrieve bioacoustic cache performance and rate limiting telemetry."""
+    return {
+        "cache": bioacoustic_cache.stats(),
+        "rate_limiter": {
+            "active_ip_trackers": len(rate_limiter._history),
+            "limits_per_minute": rate_limiter.limits,
+        }
+    }
+
 
 
 if FRONTEND_DIST.is_dir():

@@ -50,7 +50,7 @@ import numpy as np
 import soundfile as sf
 import torch
 from huggingface_hub import HfApi, hf_hub_download, hf_hub_url
-from training.feature_extractor import extract_single_file, extract_single_waveform
+from training.feature_extractor import extract_single_file, extract_single_waveform, extract_batch_waveforms
 
 # Directories
 DATA_DIR = PROJECT_ROOT / "data"
@@ -538,9 +538,17 @@ def ingest_birb_xenocanto_birds(progress: dict):
 
     start_shard = progress.get("birb_shards", 0)
     CLIPS_PER_SHARD = 1000
+    BATCH_SIZE = 24
+
+    # Optimize PyTorch threading across all host CPU cores
+    if hasattr(torch, "set_num_threads"):
+        torch.set_num_threads(os.cpu_count() or 16)
+
+    # Background executor for non-blocking Google Drive uploads
+    upload_executor = ThreadPoolExecutor(max_workers=2)
 
     stream = ResilientChainedHttpStream(urls)
-    logger.info(f"⚡ Streaming pre-segmented 6s 16kHz PyTorch audio tensors directly into BEATs feature extractor (Resuming at shard {start_shard})...")
+    logger.info(f"⚡ Streaming pre-segmented 6s 16kHz PyTorch audio tensors directly into BEATs feature extractor (Resuming at shard {start_shard}, batch_size={BATCH_SIZE})...")
 
     current_features = []
     current_labels = []
@@ -550,6 +558,25 @@ def ingest_birb_xenocanto_birds(progress: dict):
     start_time = time.time()
     skipped = 0
     needed_skip = start_shard * CLIPS_PER_SHARD
+
+    batch_waveforms = []
+    batch_labels = []
+    batch_files = []
+
+    def flush_batch():
+        nonlocal total_streamed
+        if not batch_waveforms:
+            return
+        feats = extract_batch_waveforms(batch_waveforms, sr=16000)
+        for idx_f, feat in enumerate(feats):
+            if feat is not None:
+                current_features.append(feat)
+                current_labels.append(batch_labels[idx_f])
+                current_files.append(batch_files[idx_f])
+                total_streamed += 1
+        batch_waveforms.clear()
+        batch_labels.clear()
+        batch_files.clear()
 
     try:
         tar = tarfile.open(fileobj=stream, mode="r|*")
@@ -569,40 +596,46 @@ def ingest_birb_xenocanto_birds(progress: dict):
                     continue
 
                 buf = io.BytesIO(f.read())
-                waveform = torch.load(buf, weights_only=False).numpy().flatten()
+                waveform = torch.load(buf, weights_only=False)
                 parts_split = member.name.split("/")
                 species_code = parts_split[-2] if len(parts_split) >= 2 else "bird"
                 file_name = Path(member.name).name
 
-                feat = extract_single_waveform(waveform, sr=16000)
-                if feat is not None:
-                    current_features.append(feat)
-                    current_labels.append(species_code)
-                    current_files.append(file_name)
-                    total_streamed += 1
+                batch_waveforms.append(waveform)
+                batch_labels.append(species_code)
+                batch_files.append(file_name)
+
+                if len(batch_waveforms) >= BATCH_SIZE:
+                    flush_batch()
 
                 if len(current_features) >= CLIPS_PER_SHARD:
                     current_shard_num = start_shard + shard_idx
                     shard_name = f"features_birb_xenocanto_part_{current_shard_num:04d}.npz"
                     out_npz = FEATURES_DIR / shard_name
 
-                    features_np = np.stack(current_features).astype(np.float32)
+                    features_np = np.stack(current_features[:CLIPS_PER_SHARD]).astype(np.float32)
+                    labels_np = np.array(current_labels[:CLIPS_PER_SHARD])
+                    files_np = np.array(current_files[:CLIPS_PER_SHARD])
+
                     np.savez_compressed(
                         out_npz,
                         embeddings=features_np,
-                        labels=np.array(current_labels),
-                        files=np.array(current_files),
+                        labels=labels_np,
+                        files=files_np,
                         metadata=[{"species": "birds", "dataset": "birb_xenocanto_16khz"}],
                     )
 
                     elapsed = time.time() - start_time
                     fps = total_streamed / max(elapsed, 0.1)
-                    logger.info(f"✅ Saved {shard_name}: {len(current_features)} bird clips ({fps:.1f} clips/s, total {start_shard * CLIPS_PER_SHARD + total_streamed:,})")
-                    upload_to_gdrive(out_npz, GDRIVE_FEATURES)
+                    logger.info(f"✅ Saved {shard_name}: {CLIPS_PER_SHARD} bird clips ({fps:.1f} clips/s, total {start_shard * CLIPS_PER_SHARD + total_streamed:,})")
+                    
+                    # Async non-blocking upload to Google Drive
+                    upload_executor.submit(upload_to_gdrive, out_npz, GDRIVE_FEATURES)
 
-                    current_features.clear()
-                    current_labels.clear()
-                    current_files.clear()
+                    # Keep overflow if any
+                    current_features = current_features[CLIPS_PER_SHARD:]
+                    current_labels = current_labels[CLIPS_PER_SHARD:]
+                    current_files = current_files[CLIPS_PER_SHARD:]
                     shard_idx += 1
 
                     progress["birb_shards"] = current_shard_num + 1
@@ -613,6 +646,8 @@ def ingest_birb_xenocanto_birds(progress: dict):
             except Exception as item_err:
                 logger.debug(f"Error processing member {member.name}: {item_err}")
 
+        # Flush any remaining items in the buffer
+        flush_batch()
         tar.close()
     except Exception as e:
         logger.error(f"Sequential stream error: {e}")
@@ -631,7 +666,7 @@ def ingest_birb_xenocanto_birds(progress: dict):
                 metadata=[{"species": "birds", "dataset": "birb_xenocanto_16khz"}],
             )
             logger.info(f"✅ Saved final {shard_name}: {len(current_features)} bird clips")
-            upload_to_gdrive(out_npz, GDRIVE_FEATURES)
+            upload_executor.submit(upload_to_gdrive, out_npz, GDRIVE_FEATURES)
             progress["birb_shards"] = current_shard_num + 1
             progress["total_clips_processed"] += len(current_features)
         else:

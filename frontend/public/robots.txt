@@ -1,0 +1,38 @@
+# AnimalVox AI — Search Engine Optimization Robots File
+# https://animalvox.ai
+
+User-agent: *
+Allow: /
+Allow: /landing
+Allow: /app
+Allow: /app/quick
+Allow: /app/detect
+Allow: /app/health
+Allow: /app/breed
+Allow: /app/emotions
+Allow: /app/history
+Allow: /app/settings
+Allow: /login
+Allow: /images/
+Allow: /assets/
+Disallow: /api/
+Disallow: /*?*token=*
+Disallow: /*?*key=*
+
+# Crawl Delay & Search Engine Directives
+User-agent: Googlebot
+Allow: /
+Crawl-delay: 0
+
+User-agent: Bingbot
+Allow: /
+Crawl-delay: 1
+
+User-agent: Applebot
+Allow: /
+
+User-agent: DuckDuckBot
+Allow: /
+
+# Sitemap Location
+Sitemap: https://animalvox.ai/sitemap.xml

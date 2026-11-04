@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { sanitizeUserErrorMessage } from '../lib/api'
 
 export function useAudioRecorder(onComplete) {
   const [status, setStatus] = useState('idle')
@@ -22,7 +23,7 @@ export function useAudioRecorder(onComplete) {
       await onComplete?.({ blob, url, fileName, durationSeconds: seconds })
       setStatus('result')
     } catch (err) {
-      setError(err?.message || 'The recording could not be analyzed. Please try again.')
+      setError(sanitizeUserErrorMessage(err))
       setStatus('idle')
     }
   }, [onComplete, seconds])

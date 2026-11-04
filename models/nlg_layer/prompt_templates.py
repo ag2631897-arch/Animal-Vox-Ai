@@ -24,13 +24,14 @@ TRANSLATION_PROMPT = """Species: {species} ({species_detail})
 Primary behavioral interpretation: {behavior_labels}
 Intensity: {intensity}/1.0
 Urgency: {urgency}/1.0
+Acoustic character: {acoustic_signature}
 Call sequence context: {sequence_context}
 Escalation pattern: {escalation}
 Ethology reference: {ethology_context}
 Emotional state: {emotional_state}
 Health context: {health_context}
 
-Express the likely meaning naturally. Do not add a backstory or describe acoustic changes.
+Express the likely meaning naturally in authentic, unique, first-person language tailored to this specific animal sound. Do not repeat generic boilerplate. Do not add a backstory or describe acoustic changes.
 Respond in this exact JSON format:
 {{
   "translation": "One concise, first-person sentence in everyday language",
@@ -59,13 +60,15 @@ def get_intensity_level(intensity: float) -> str:
 def build_prompt(species, species_detail, behavior_labels, intensity, urgency,
                  sequence_context="No prior calls", escalation="stable",
                  ethology_context="General species behavior",
-                 emotional_state="Not assessed", health_context="No concerns"):
+                 emotional_state="Not assessed", health_context="No concerns",
+                 acoustic_signature="Natural vocalization"):
     """Build the complete translation prompt."""
     level = get_intensity_level(intensity)
     prompt = TRANSLATION_PROMPT.format(
         species=species, species_detail=species_detail or "unspecified",
         behavior_labels=", ".join(behavior_labels) if isinstance(behavior_labels, list) else behavior_labels,
         intensity=f"{intensity:.2f}", urgency=f"{urgency:.2f}",
+        acoustic_signature=acoustic_signature,
         sequence_context=sequence_context, escalation=escalation,
         ethology_context=ethology_context,
         emotional_state=emotional_state,
