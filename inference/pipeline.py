@@ -668,13 +668,15 @@ class AnimalVoxPipeline:
             if had_human_speech:
                 cleaned_rms = float(np.sqrt(np.mean(cleaned_clip ** 2)))
                 if cleaned_rms >= 0.020:
-                    # Verify the isolated segment contains a genuine animal vocalization (not human imitation)
+                    # Verify the isolated segment contains a genuine animal vocalization (not human imitation or speech)
                     cleaned_spoof = self.anti_spoof.check(cleaned_clip, sr=AUDIO_CONFIG.sample_rate, filename=filename)
                     if not cleaned_spoof.is_human:
-                        clip = cleaned_clip
-                        spoof_result = cleaned_spoof
-                        human_speech_removed = True
-                        logger.info("Mixed audio: isolated animal vocalization and removed human talking.")
+                        cleaned_det = self.animal_detector.detect(cleaned_clip, filename=filename)
+                        if cleaned_det.has_animal:
+                            clip = cleaned_clip
+                            spoof_result = cleaned_spoof
+                            human_speech_removed = True
+                            logger.info("Mixed audio: isolated animal vocalization and removed human talking.")
 
             # 2. Check anti-spoofing on the active vocalization clip
             full_spoof = self.anti_spoof.check(clip, sr=AUDIO_CONFIG.sample_rate, filename=filename)

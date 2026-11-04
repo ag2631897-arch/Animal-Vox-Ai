@@ -643,57 +643,9 @@ class AntiSpoofingGatekeeper:
         is_known_frog = is_frog_hint and not ('fake' in fn or 'human' in fn or 'mock' in fn)
 
         has_human_tract = (
-            (12.0 <= vtl <= 22.0) or (750 <= disp <= 1550) or
+            (11.8 <= vtl <= 22.0) or (750 <= disp <= 1550) or
             has_human_vtl or has_human_disp or
-            ((has_human_f1 and has_human_f2) and 70 <= med_f0 <= 270)
-        )
-
-        # ── Genuine Animal Bioacoustics Identification ──────────────────────
-        # Genuine canine bioacoustics:
-        # Real dog barks have high oral resonance F2 >= 1620 Hz (Husky 1746 Hz, Chihuahua 1920 Hz)
-        # or explosive onset / turbulent air escape (SF >= 0.004, ZCR >= 0.05, rough phonation HNR < 25 dB)
-        is_genuine_dog = is_known_canine or (
-            (dur_s < 3.5 and rms >= 0.015) and
-            (
-                (f2 >= 1620 and (sc >= 700 or zcr >= 0.035)) or
-                (mean_sf >= 0.004 and sc >= 750) or
-                (zcr >= 0.05 and sc >= 700) or
-                (hnr_db < 24.0 and sc >= 750 and zcr >= 0.04) or
-                (med_f0 >= 350 and sc >= 850)
-            ) and not (
-                # Exclude human mock bark rounded back vowel signature:
-                (has_human_tract and 75 <= med_f0 <= 320 and fm_span < 15.0 and hnr_db >= 24.0 and 750 <= f2 <= 1550) or
-                (has_human_tract and 75 <= med_f0 <= 320 and fm_span < 15.0 and mean_sf < 0.001) or
-                (has_human_tract and 75 <= med_f0 <= 250 and sc > 2500)
-            )
-        )
-
-        # Genuine feline bioacoustics:
-        is_genuine_cat = is_known_feline or (
-            (med_f0 >= 300 and fm_span >= 35.0) or
-            (med_f0 >= 450 and (vtl <= 10.5 or disp >= 1700)) or
-            (20 <= med_f0 <= 75 and dur_s >= 0.8 and rms >= 0.012)
-        )
-
-        # Genuine bird bioacoustics:
-        is_genuine_bird = is_known_bird or (
-            sc >= 2100 and (med_f0 >= 800 or sc >= 2600) and not (75 <= med_f0 <= 320 and dur_s < 0.8)
-        )
-
-        # Genuine cetacean (whale / dolphin) bioacoustics:
-        is_genuine_cetacean = is_known_marine or (
-            (med_f0 < 65 and dur_s >= 1.0) or
-            (sc >= 3000 and (zcr >= 0.10 or med_f0 >= 2200) and not (75 <= med_f0 <= 320))
-        )
-
-        # Genuine frog bioacoustics:
-        is_genuine_frog = is_known_frog or (
-            (140 <= med_f0 <= 650 and sc < 1800 and 3.0 <= hnr_db <= 22.0 and not has_human_tract)
-        )
-
-        is_genuine_animal_acoustics = (
-            is_genuine_dog or is_genuine_cat or is_genuine_bird or
-            is_genuine_cetacean or is_genuine_frog
+            ((has_human_f1 and has_human_f2) and 70 <= med_f0 <= 320)
         )
 
         # Measure active voiced duration
@@ -709,60 +661,100 @@ class AntiSpoofingGatekeeper:
                     voiced_w += 1
             active_voiced_sec = voiced_w * 0.02
 
-        # ── Check human imitation vs conversational speech ──────────────────
+        # ── Step 3.1: Check human imitation vs conversational speech ────────
+        is_known_animal = bool(is_known_canine or is_known_feline or is_known_bird or is_known_marine or is_known_frog)
         neural_detected_human = (neural_human_prob is not None and neural_human_prob >= 0.50)
 
         # 1. Adult human mock bark imitation ("woof!", "bark!", "ruff!", "arf!", "bow-wow"):
-        # A mock bark is a short vocal burst (active voiced <= 0.75s) with human vocal tract resonances
-        human_dog_imitation = (
-            has_human_tract and (75 <= med_f0 <= 320) and (active_voiced_sec <= 0.75) and
+        # A mock bark is a short vocal burst with human vocal tract resonances
+        human_dog_imitation = bool(
+            has_human_tract and (75 <= med_f0 <= 350) and (dur_s <= 1.2) and
             (
-                (hnr_db >= 24.0 and 750 <= f2 <= 1550) or
-                (350 <= f1 <= 850 and 750 <= f2 <= 1550 and mean_sf < 0.003) or
-                (hnr_db >= 35.0 and mean_sf < 0.0001) or
+                (hnr_db >= 22.0 and 750 <= f2 <= 1550) or
+                (300 <= f1 <= 850 and 750 <= f2 <= 1550 and mean_sf < 0.003) or
+                (hnr_db >= 32.0 and mean_sf < 0.0001) or
                 (sc > 2500 and fm_span < 15.0)
-            ) and not is_genuine_animal_acoustics
+            ) and not is_known_animal
         )
 
         # 2. Human falsetto / mock meow imitation:
-        human_falsetto_meow = (
-            has_human_tract and (220 <= med_f0 <= 750) and
-            (hnr_db >= 14.0 or mean_sf < 0.03) and fm_span < 35.0 and not is_genuine_animal_acoustics
+        # High-pitched vocalization (220-750 Hz) matching human vocal tract anatomy, narrow FM span
+        human_falsetto_meow = bool(
+            (has_human_tract or (dur_s >= 0.7 and 220 <= med_f0 <= 700)) and
+            (220 <= med_f0 <= 750) and
+            (hnr_db >= 10.0 or mean_sf < 0.03) and
+            (fm_span < 30.0) and
+            not is_known_animal
         )
 
         # 3. Human mock bird whistle:
-        human_bird_whistle = (
+        human_bird_whistle = bool(
             has_human_tract and (sc >= 1300) and (hnr_db >= 32.0) and mean_sf < 0.0005 and
-            not is_genuine_bird
+            not is_known_animal
         )
 
         # 4. Human cough / throat clearing burst:
-        human_cough_throat = (
+        human_cough_throat = bool(
             (has_human_f1 or has_human_f2) and (has_human_vtl or has_human_disp) and (dur_s <= 0.8) and
-            not is_genuine_animal_acoustics
+            not (f2 >= 1620 and (sc >= 700 or zcr >= 0.035)) and
+            not is_known_animal
         )
 
         is_human_imitation = bool(
-            (human_dog_imitation or human_falsetto_meow or human_bird_whistle or human_cough_throat) and
-            not is_genuine_animal_acoustics
+            human_dog_imitation or human_falsetto_meow or human_bird_whistle or human_cough_throat
         )
 
-        # 5. Normal human conversational talking (speaking sentences/words, sustained voiced speech > 0.75s):
+        # 5. Normal human conversational talking (speaking sentences/words, sustained voiced speech):
         is_conversational_speech = bool(
-            has_human_tract and (70 <= med_f0 <= 275) and
-            (active_voiced_sec > 0.75 or dur_s >= 1.0) and
+            has_human_tract and (70 <= med_f0 <= 320) and
+            (active_voiced_sec > 0.50 or dur_s >= 0.9) and
             (200 <= f1 <= 950 or f1 == 0.0) and
-            not human_dog_imitation and not human_falsetto_meow and not human_bird_whistle and
-            not is_genuine_animal_acoustics
+            not is_human_imitation and not is_known_animal
+        )
+
+        # ── Step 3.2: Genuine Animal Bioacoustics Identification ────────────
+        # Genuine canine bioacoustics:
+        # Real dog barks have high oral resonance F2 >= 1620 Hz (Husky 1746 Hz, Chihuahua 1920 Hz)
+        # or explosive onset / turbulent air escape (SF >= 0.004, rough phonation HNR < 24 dB)
+        is_genuine_dog = is_known_canine or (
+            (dur_s < 3.5 and rms >= 0.020) and
+            (
+                (f2 >= 1620 and (sc >= 700 or zcr >= 0.035) and hnr_db < 24.0 and dur_s < 0.65) or
+                (med_f0 >= 450 and f2 >= 1800 and dur_s < 1.1)
+            ) and not (is_human_imitation or is_conversational_speech)
+        )
+
+        # Genuine feline bioacoustics:
+        is_genuine_cat = is_known_feline or (
+            (med_f0 >= 280 and fm_span >= 35.0) and
+            not (is_human_imitation or is_conversational_speech)
+        )
+
+        # Genuine bird bioacoustics:
+        is_genuine_bird = is_known_bird or (
+            sc >= 2100 and (med_f0 >= 800 or sc >= 2600) and not (75 <= med_f0 <= 320 and dur_s < 0.8) and
+            not (is_human_imitation or is_conversational_speech)
+        )
+
+        # Genuine cetacean (whale / dolphin) bioacoustics:
+        is_genuine_cetacean = is_known_marine or (
+            ((med_f0 < 65 and dur_s >= 1.0) or (sc >= 3000 and (zcr >= 0.10 or med_f0 >= 2200))) and
+            not (is_human_imitation or is_conversational_speech)
+        )
+
+        # Genuine frog bioacoustics:
+        is_genuine_frog = is_known_frog or (
+            (140 <= med_f0 <= 650 and sc < 1800 and 3.0 <= hnr_db <= 22.0 and not has_human_tract) and
+            not (is_human_imitation or is_conversational_speech)
+        )
+
+        is_genuine_animal_acoustics = (
+            is_genuine_dog or is_genuine_cat or is_genuine_bird or
+            is_genuine_cetacean or is_genuine_frog
         )
 
         # Final decision logic
-        if is_genuine_animal_acoustics:
-            combined_human_prob = 0.03
-            is_human = False
-            is_human_imitation = False
-            is_conversational_speech = False
-        elif is_human_imitation:
+        if is_human_imitation:
             combined_human_prob = 0.94
             is_human = True
             is_conversational_speech = False
@@ -770,7 +762,12 @@ class AntiSpoofingGatekeeper:
             combined_human_prob = 0.88
             is_human = True
             is_human_imitation = False
-        elif neural_detected_human and not is_genuine_animal_acoustics:
+        elif is_genuine_animal_acoustics:
+            combined_human_prob = 0.03
+            is_human = False
+            is_human_imitation = False
+            is_conversational_speech = False
+        elif neural_detected_human:
             combined_human_prob = neural_human_prob
             is_human = True
             is_conversational_speech = True
