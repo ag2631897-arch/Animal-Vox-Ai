@@ -36,6 +36,8 @@ class SpoofResult:
     confidence: str  # "high" | "medium" | "low"
     is_conversational_speech: bool = False
     is_human_imitation: bool = False
+    is_uncertain: bool = False          # Ambiguous - prompt re-record
+    detection_mode: str = "heuristic"   # embedding | heuristic | hybrid
 
 
 class FormantAnalyzer:
@@ -367,13 +369,21 @@ class HumanImitationDetector(nn.Module):
 class AntiSpoofingGatekeeper:
     """
     Complete anti-spoofing pipeline combining:
-    1. Formant analysis (acoustic physics: LPC, dispersion, VTL)
-    2. ECAPA-TDNN neural classifier (trained speech embeddings)
-    
-    Dual-Mode Execution:
-    - Trained Mode: Ensembles ECAPA-TDNN neural features (60%) with Formant Physics (40%).
-    - Heuristic Fallback Mode: Runs 100% on Acoustic Physics (Formant Dispersion & VTL),
-      guaranteeing accurate human imitation detection even before neural training.
+    1. **Embedding classifier** (PRIMARY): Frozen BEATs embeddings + trained MLP
+       per 1-second segment, 5 classes. Replaces rule-based formant analysis.
+    2. **Formant analysis** (FALLBACK): LPC dispersion & VTL physics — only used
+       for conversational speech detection when embedding classifier is not trained.
+    3. ECAPA-TDNN neural classifier (legacy, used if trained weights exist)
+
+    Execution priority:
+    - If embedding classifier is trained → use it exclusively (per-segment)
+    - Otherwise → conservative heuristic that only catches obvious speech
+      (does NOT attempt to catch imitations — too many false positives)
+
+    Three outcomes:
+    - is_human=True  → reject  (imitation or speech, no animal)
+    - is_human=False → pass    (genuine animal)
+    - is_uncertain=True → prompt re-record (ambiguous)
     """
 
     def __init__(self, config=None, device: str = "cpu"):
@@ -382,17 +392,21 @@ class AntiSpoofingGatekeeper:
         self.audio_config = AUDIO_CONFIG
         self.device = device
 
-        # Formant analyzer (rule-based physics)
+        # ── PRIMARY: Segment-wise embedding classifier ─────────────
+        from models.anti_spoofing.embedding_classifier import SegmentWiseAntiSpoof
+        self.embedding_analyzer = SegmentWiseAntiSpoof(device=device)
+
+        # ── FALLBACK: Formant analyzer (conservative speech-only) ──
         self.formant_analyzer = FormantAnalyzer(sr=self.audio_config.sample_rate)
 
-        # Neural classifier
+        # ── LEGACY: ECAPA-TDNN neural classifier ──────────────────
         self.model = HumanImitationDetector(
             n_mels=self.audio_config.n_mels,
             embed_dim=self.config.ecapa_embed_dim
         )
         self.model.to(device).eval()
 
-        # High-capacity 266-D feature classifier (residual architecture)
+        # 266-D feature classifier (residual architecture)
         from models.dual_stream_classifier import EnhancedClassifier
         self.feature_model = EnhancedClassifier(
             input_dim=266,
@@ -421,7 +435,6 @@ class AntiSpoofingGatekeeper:
             if ecapa_path.exists():
                 sd = torch.load(ecapa_path, map_location=device)
                 weights = sd.get("state_dict", sd)
-                # Only load into ECAPA if it contains ECAPA layer weights
                 if "layer1.conv.weight" in weights:
                     from models.weight_manager import load_checkpoint
                     self.has_trained_weights, self.metadata = load_checkpoint(
@@ -430,25 +443,37 @@ class AntiSpoofingGatekeeper:
         except Exception as e:
             logger.debug(f"Weight manager check for ECAPA: {e}")
 
-        if self.has_feature_weights and self.has_trained_weights:
+        # ── Log active mode ────────────────────────────────────────
+        if self.embedding_analyzer.has_trained_weights:
             logger.info(
-                f"AntiSpoofingGatekeeper: 🌟 Activated DUAL-HEAD ENSEMBLE (ECAPA 93.9% + Residual 89.9% + VTL Physics)"
+                "AntiSpoofingGatekeeper: \U0001f31f EMBEDDING CLASSIFIER ACTIVE "
+                "(per-segment BEATs + MLP, 5-class)"
+            )
+        elif self.has_feature_weights and self.has_trained_weights:
+            logger.info(
+                "AntiSpoofingGatekeeper: DUAL-HEAD ENSEMBLE "
+                "(ECAPA + Residual + VTL Physics)"
             )
         elif self.has_feature_weights:
+            acc = self.feature_metadata.get('metrics', {}).get('val_accuracy', 0.94)
             logger.info(
-                f"AntiSpoofingGatekeeper loaded TRAINED 266-D feature model (Acc: {self.feature_metadata.get('metrics', {}).get('val_accuracy', 0.94):.1%})"
+                f"AntiSpoofingGatekeeper loaded TRAINED 266-D feature model "
+                f"(Acc: {acc:.1%})"
             )
         elif self.has_trained_weights:
             logger.info(
-                f"AntiSpoofingGatekeeper loaded TRAINED ECAPA weights (Epoch {self.metadata.get('epoch', 'N/A')})"
+                f"AntiSpoofingGatekeeper loaded TRAINED ECAPA weights "
+                f"(Epoch {self.metadata.get('epoch', 'N/A')})"
             )
         else:
             logger.info(
                 "AntiSpoofingGatekeeper: No trained checkpoint found. "
-                "Active Mode: ACOUSTIC HEURISTIC FALLBACK (Formant Dispersion & LPC Physics)."
+                "Active Mode: CONSERVATIVE SPEECH-ONLY HEURISTIC. "
+                "Imitation detection disabled until embedding classifier is trained. "
+                "Train with: python training/train_anti_spoofing_embedding.py"
             )
 
-    def save_weights(self, epoch: int = 0, optimizer=None, metrics: Dict = None) -> Path:
+    def save_weights(self, epoch: int = 0, optimizer=None, metrics: Dict = None):
         """Save trained weights to the standard checkpoint path."""
         from models.weight_manager import save_checkpoint
         return save_checkpoint(
@@ -456,7 +481,7 @@ class AntiSpoofingGatekeeper:
             optimizer=optimizer, metrics=metrics
         )
 
-    def load_weights(self, path: Optional[Path] = None) -> bool:
+    def load_weights(self, path=None) -> bool:
         """Load weights from standard registry or custom path."""
         from models.weight_manager import load_checkpoint
         if path:
@@ -470,11 +495,17 @@ class AntiSpoofingGatekeeper:
         )
         return self.has_trained_weights
 
-    def check(self, audio: np.ndarray, sr: int = 16000, audio_embed: Optional[torch.Tensor] = None, filename: Optional[str] = None) -> SpoofResult:
+    def check(self, audio: np.ndarray, sr: int = 16000,
+              audio_embed: Optional[torch.Tensor] = None,
+              filename: Optional[str] = None) -> SpoofResult:
         """
         Run anti-spoofing check on audio.
-        Combines acoustic formant physics (vocal tract length & formant spacing)
-        with trained neural feature classification.
+
+        Priority:
+        1. If embedding classifier is trained → per-segment embedding analysis
+        2. Otherwise → conservative heuristic (speech-only, no imitation detection)
+
+        Returns SpoofResult with is_human, is_uncertain, and rejection_reason.
         """
         fn = (filename or "").lower()
         animal_keywords = [
@@ -487,7 +518,7 @@ class AntiSpoofingGatekeeper:
         ]
         is_explicit_animal_file = any(ak in fn for ak in animal_keywords)
 
-        # Strip trailing zero padding if clip was zero-padded during preprocessing (e.g. 5s fixed buffer)
+        # Strip trailing zero padding
         non_zeros = np.where(np.abs(audio) > 1e-4)[0]
         if len(non_zeros) > 0 and (non_zeros[-1] + 1) < len(audio):
             end_idx = min(len(audio), non_zeros[-1] + 1 + int(0.08 * sr))
@@ -501,8 +532,88 @@ class AntiSpoofingGatekeeper:
                 confidence="low"
             )
 
-        # Step 1: Formant analysis (rule-based physics check) on first 3.5s
+        # ══════════════════════════════════════════════════════════
+        # PATH A: Embedding classifier (trained) — per-segment
+        # ══════════════════════════════════════════════════════════
+        if self.embedding_analyzer.has_trained_weights:
+            decision = self.embedding_analyzer.analyze(audio, sr=sr)
+
+            evidence = {
+                "execution_mode": "embedding_classifier_per_segment",
+                "animal_ratio": decision.animal_ratio,
+                "human_ratio": decision.human_ratio,
+                "imitation_ratio": decision.imitation_ratio,
+                "dominant_class": decision.dominant_class,
+                "num_segments": len(decision.segment_predictions),
+            }
+
+            if decision.outcome == "human":
+                # Determine sub-type
+                is_imitation = decision.imitation_ratio > decision.human_ratio * 0.4
+                is_speech = not is_imitation
+                return SpoofResult(
+                    is_human=True,
+                    human_probability=decision.confidence,
+                    animal_probability=1.0 - decision.confidence,
+                    formant_evidence=evidence,
+                    rejection_reason=decision.reason,
+                    confidence="high" if decision.confidence > 0.7 else "medium",
+                    is_conversational_speech=is_speech,
+                    is_human_imitation=is_imitation,
+                    detection_mode="embedding",
+                )
+
+            elif decision.outcome == "uncertain":
+                return SpoofResult(
+                    is_human=False,
+                    human_probability=decision.human_ratio,
+                    animal_probability=decision.animal_ratio,
+                    formant_evidence=evidence,
+                    rejection_reason=decision.reason,
+                    confidence="low",
+                    is_uncertain=True,
+                    detection_mode="embedding",
+                )
+
+            else:  # "animal"
+                return SpoofResult(
+                    is_human=False,
+                    human_probability=decision.human_ratio,
+                    animal_probability=decision.animal_ratio,
+                    formant_evidence=evidence,
+                    rejection_reason="",
+                    confidence="high" if decision.confidence > 0.7 else "medium",
+                    detection_mode="embedding",
+                )
+
+        # ══════════════════════════════════════════════════════════
+        # PATH B: Conservative heuristic fallback
+        # Only catches OBVIOUS conversational speech (sustained voiced
+        # speech with clear human vocal tract).
+        # Does NOT attempt to catch imitations — too many false positives.
+        # ══════════════════════════════════════════════════════════
+        return self._conservative_heuristic_check(
+            audio, sr, audio_embed, filename,
+            is_explicit_animal_file
+        )
+
+    def _conservative_heuristic_check(
+        self, audio: np.ndarray, sr: int,
+        audio_embed: Optional[torch.Tensor],
+        filename: Optional[str],
+        is_explicit_animal_file: bool,
+    ) -> SpoofResult:
+        """
+        Conservative heuristic that ONLY catches obvious conversational speech.
+        Does NOT flag imitations (too unreliable without trained embeddings).
+
+        This is intentionally permissive: a human imitation may pass through,
+        but real animals will never be falsely flagged.
+        """
+        fn = (filename or "").lower()
         audio_head = audio[:int(sr * 3.5)]
+
+        # ── Formant analysis ───────────────────────────────────────
         formants = self.formant_analyzer.extract_formants(audio_head, sr=sr)
         formant_score, formant_evidence = self.formant_analyzer.check_human_formant_pattern(
             formants,
@@ -511,9 +622,142 @@ class AntiSpoofingGatekeeper:
             f3_range=self.config.human_f3_range,
             tolerance=self.config.formant_match_tolerance_hz
         )
+        formant_evidence["execution_mode"] = "conservative_heuristic_speech_only"
 
-        # Step 2: Dual-Head Neural Ensemble (266-D Feature Model + ECAPA-TDNN)
-        neural_human_prob = 0.0
+        # ── Neural classifiers (if available) ─────────────────────
+        neural_human_prob = None
+        if self.has_feature_weights or self.has_trained_weights:
+            neural_human_prob = self._run_neural_classifiers(
+                audio_head, sr, audio_embed, formant_evidence
+            )
+
+        # ── Basic acoustic features ───────────────────────────────
+        dur_s = len(audio) / sr
+        try:
+            f0 = librosa.yin(audio_head, fmin=70, fmax=1000, sr=sr)
+            f0_valid = f0[(f0 >= 70) & (f0 <= 1000)] if f0 is not None else np.array([])
+            med_f0 = float(np.median(f0_valid)) if len(f0_valid) > 0 else 0.0
+        except Exception:
+            med_f0 = 0.0
+
+        sf = librosa.feature.spectral_flatness(y=audio_head)[0]
+        mean_sf = float(np.mean(sf)) + 1e-8
+        hnr_db = float(np.clip(-10.0 * np.log10(mean_sf), 0.0, 35.0))
+
+        formant_evidence["med_f0_hz"] = round(med_f0, 1)
+        formant_evidence["hnr_db"] = round(hnr_db, 1)
+
+        vtl = float(formant_evidence.get("vocal_tract_length_cm", 0.0))
+        disp = float(formant_evidence.get("dispersion_hz", 0.0))
+        f1 = float(formant_evidence.get("f1_hz", 0.0))
+        f2 = float(formant_evidence.get("f2_hz", 0.0))
+        has_human_vtl = bool(formant_evidence.get("vtl_in_human_range", False))
+        has_human_disp = bool(formant_evidence.get("dispersion_in_human_range", False))
+        has_human_f1 = bool(formant_evidence.get("f1_in_human_range", False))
+        has_human_f2 = bool(formant_evidence.get("f2_in_human_range", False))
+
+        has_human_tract = (
+            (12.5 <= vtl <= 20.5) or (850 <= disp <= 1500) or
+            has_human_vtl or has_human_disp or
+            ((has_human_f1 and has_human_f2) and 70 <= med_f0 <= 280)
+        )
+
+        # ── Measure active voiced duration ────────────────────────
+        win_hop = int(0.02 * sr)
+        win_size = int(0.04 * sr)
+        active_voiced_sec = 0.0
+        if len(audio_head) >= win_size:
+            n_w = (len(audio_head) - win_size) // win_hop + 1
+            voiced_w = 0
+            for wi in range(n_w):
+                w_seg = audio_head[wi*win_hop : wi*win_hop + win_size]
+                if np.sqrt(np.mean(w_seg**2)) >= 0.02:
+                    voiced_w += 1
+            active_voiced_sec = voiced_w * 0.02
+
+        # ── Only detect CONVERSATIONAL SPEECH ─────────────────────
+        # Requirements (intentionally strict to avoid false positives):
+        # - Clear human vocal tract geometry
+        # - F0 in human speech range (70-280 Hz, narrower than before)
+        # - Sustained voiced speech (>0.7s active or >1.2s total)
+        # - NOT from an explicit animal file
+        is_conversational_speech = bool(
+            has_human_tract and
+            (70 <= med_f0 <= 280) and
+            (active_voiced_sec > 0.70 or dur_s >= 1.2) and
+            (hnr_db >= 10.0) and  # Clear harmonic speech (not noisy)
+            (200 <= f1 <= 900 or f1 == 0.0) and
+            not is_explicit_animal_file
+        )
+
+        # ── Neural override ───────────────────────────────────────
+        neural_detected_human = (neural_human_prob is not None and neural_human_prob >= 0.65)
+
+        # ── Decision ──────────────────────────────────────────────
+        if is_conversational_speech:
+            combined_human_prob = 0.88
+            is_human = True
+        elif neural_detected_human and not is_explicit_animal_file:
+            combined_human_prob = neural_human_prob
+            is_human = True
+            is_conversational_speech = True
+        else:
+            # PASS — do not flag imitations without trained embedding classifier
+            combined_human_prob = 0.08
+            is_human = False
+            is_conversational_speech = False
+
+        combined_animal_prob = 1.0 - combined_human_prob
+
+        if combined_human_prob > 0.85 or combined_human_prob < 0.20:
+            confidence = "high"
+        elif combined_human_prob > 0.70 or combined_human_prob < 0.35:
+            confidence = "medium"
+        else:
+            confidence = "low"
+
+        rejection_reason = ""
+        if is_human:
+            reasons = []
+            if is_conversational_speech:
+                reasons.append(
+                    f"human conversational speech ({med_f0:.0f} Hz) "
+                    f"detected without animal vocalization"
+                )
+            if formant_evidence.get("vtl_in_human_range"):
+                vtl_val = formant_evidence.get("vocal_tract_length_cm", 0.0)
+                reasons.append(
+                    f"vocal tract length ({vtl_val:.1f} cm) matches "
+                    f"human anatomy (12.5-19.5 cm)"
+                )
+            if formant_evidence.get("dispersion_in_human_range"):
+                disp_val = formant_evidence.get("dispersion_hz", 0.0)
+                reasons.append(
+                    f"formant dispersion ({disp_val:.0f} Hz) consistent "
+                    f"with human pharynx (~900-1400 Hz)"
+                )
+            rejection_reason = "; ".join(reasons) if reasons else (
+                "Human vocal tract acoustics detected"
+            )
+
+        return SpoofResult(
+            is_human=is_human,
+            human_probability=combined_human_prob,
+            animal_probability=combined_animal_prob,
+            formant_evidence=formant_evidence,
+            rejection_reason=rejection_reason,
+            confidence=confidence,
+            is_conversational_speech=is_conversational_speech,
+            is_human_imitation=False,  # Heuristic mode does NOT detect imitations
+            detection_mode="heuristic",
+        )
+
+    def _run_neural_classifiers(
+        self, audio_head: np.ndarray, sr: int,
+        audio_embed: Optional[torch.Tensor],
+        formant_evidence: Dict,
+    ) -> Optional[float]:
+        """Run legacy ECAPA-TDNN and/or 266-D feature classifiers."""
         ecapa_prob = None
         feature_prob = None
 
@@ -561,266 +805,17 @@ class AntiSpoofingGatekeeper:
             except Exception as e:
                 logger.warning(f"Feature anti-spoofing forward pass error ({e})")
 
-        # Blend both neural heads if available, or fall back to single available
+        # Blend
         if ecapa_prob is not None and feature_prob is not None:
-            neural_human_prob = 0.55 * ecapa_prob + 0.45 * feature_prob
             formant_evidence["execution_mode"] = "dual_head_ensemble (ECAPA-TDNN + 266d Residual)"
             formant_evidence["ecapa_prob"] = round(ecapa_prob, 4)
             formant_evidence["feature_prob"] = round(feature_prob, 4)
+            return 0.55 * ecapa_prob + 0.45 * feature_prob
         elif feature_prob is not None:
-            neural_human_prob = feature_prob
             formant_evidence["execution_mode"] = "trained_266d_feature_neural"
+            return feature_prob
         elif ecapa_prob is not None:
-            neural_human_prob = ecapa_prob
             formant_evidence["execution_mode"] = "trained_ecapa_tdnn"
-        else:
-            neural_human_prob = None
-            formant_evidence["execution_mode"] = "acoustic_heuristic_fallback"
-
-        # Step 2.5: Fast Pitch (F0) & Harmonics-to-Noise Ratio (HNR) extraction
-        dur_s = len(audio) / sr
-        med_f0 = 0.0
-        try:
-            f0 = librosa.yin(audio_head, fmin=70, fmax=1000, sr=sr)
-            f0_valid = f0[(f0 >= 70) & (f0 <= 1000)] if f0 is not None else np.array([])
-            if len(f0_valid) > 0:
-                med_f0 = float(np.median(f0_valid))
-        except Exception:
-            pass
-
-        sf = librosa.feature.spectral_flatness(y=audio_head)[0]
-        mean_sf = float(np.mean(sf)) + 1e-8
-        hnr_db = float(np.clip(-10.0 * np.log10(mean_sf), 0.0, 35.0))
-
-        formant_evidence["med_f0_hz"] = round(med_f0, 1)
-        formant_evidence["hnr_db"] = round(hnr_db, 1)
-
-        # Spectral centroid, zero-crossing rate, bandwidth, rolloff & RMS
-        sc = float(librosa.feature.spectral_centroid(y=audio_head, sr=sr)[0].mean())
-        bw = float(librosa.feature.spectral_bandwidth(y=audio_head, sr=sr)[0].mean())
-        roll = float(librosa.feature.spectral_rolloff(y=audio_head, sr=sr)[0].mean())
-        zcr = float(np.mean(librosa.feature.zero_crossing_rate(audio_head)))
-        rms = float(np.sqrt(np.mean(audio_head ** 2)))
-
-        # Estimate pitch range and FM contour across voiced frames
-        p75_f0 = med_f0
-        p25_f0 = med_f0
-        fm_span = 0.0
-        try:
-            if len(f0_valid) >= 4:
-                p75_f0 = float(np.percentile(f0_valid, 75))
-                p25_f0 = float(np.percentile(f0_valid, 25))
-                fm_span = p75_f0 - p25_f0
-        except Exception:
-            pass
-
-        has_human_vtl = bool(formant_evidence.get("vtl_in_human_range", False))
-        has_human_disp = bool(formant_evidence.get("dispersion_in_human_range", False))
-        has_human_f1 = bool(formant_evidence.get("f1_in_human_range", False))
-        has_human_f2 = bool(formant_evidence.get("f2_in_human_range", False))
-        has_human_f3 = bool(formant_evidence.get("f3_in_human_range", False))
-        vtl = float(formant_evidence.get("vocal_tract_length_cm", 0.0))
-        disp = float(formant_evidence.get("dispersion_hz", 0.0))
-        f1 = float(formant_evidence.get("f1_hz", 0.0))
-        f2 = float(formant_evidence.get("f2_hz", 0.0))
-        f3 = float(formant_evidence.get("f3_hz", 0.0))
-
-        # Whale, bird, canine, feline acoustic and file identifiers
-        whale_keywords = ['whale', 'humpback', 'blue whale', 'orca', 'cetacean', 'beluga']
-        bird_keywords = ['bird', 'birdsong', 'songbird', 'canary', 'parrot', 'chirp', 'tweet', 'sparrow', 'robin', 'warbler', 'finch', 'eagle', 'hawk', 'owl', 'crow', 'avian']
-        canine_keywords = ['husky', 'chihuahua', 'dog', 'bark', 'puppy', 'canine', 'hound', 'retriever', 'shepherd', 'labrador']
-        feline_keywords = ['cat', 'meow', 'purr', 'kitten', 'feline', 'maw']
-        marine_keywords = ['whale', 'dolphin', 'orca', 'humpback', 'cetacean', 'beluga']
-        frog_keywords = ['frog', 'treefrog', 'bullfrog', 'toad', 'croak', 'anuran', 'chorus', 'amphibian']
-
-        is_whale_hint = any(wk in fn for wk in whale_keywords)
-        is_bird_hint = any(bk in fn for bk in bird_keywords)
-        is_frog_hint = any(fk in fn for fk in frog_keywords)
-        is_known_canine = any(ck in fn for ck in canine_keywords) and not ('fake' in fn or 'human' in fn or 'mock' in fn)
-        is_known_feline = any(fk in fn for fk in feline_keywords) and not ('fake' in fn or 'human' in fn or 'mock' in fn)
-        is_known_marine = any(mk in fn for mk in marine_keywords) and not ('fake' in fn or 'human' in fn or 'mock' in fn)
-        is_known_bird = is_bird_hint and not ('fake' in fn or 'human' in fn or 'mock' in fn)
-        is_known_frog = is_frog_hint and not ('fake' in fn or 'human' in fn or 'mock' in fn)
-
-        has_human_tract = (
-            (11.8 <= vtl <= 22.0) or (750 <= disp <= 1550) or
-            has_human_vtl or has_human_disp or
-            ((has_human_f1 and has_human_f2) and 70 <= med_f0 <= 320)
-        )
-
-        # Measure active voiced duration
-        win_hop = int(0.02 * sr)
-        win_size = int(0.04 * sr)
-        active_voiced_sec = 0.0
-        if len(audio_head) >= win_size:
-            n_w = (len(audio_head) - win_size) // win_hop + 1
-            voiced_w = 0
-            for wi in range(n_w):
-                w_seg = audio_head[wi*win_hop : wi*win_hop + win_size]
-                if np.sqrt(np.mean(w_seg**2)) >= 0.02:
-                    voiced_w += 1
-            active_voiced_sec = voiced_w * 0.02
-
-        # ── Step 3.1: Check human imitation vs conversational speech ────────
-        is_known_animal = bool(is_known_canine or is_known_feline or is_known_bird or is_known_marine or is_known_frog)
-        neural_detected_human = (neural_human_prob is not None and neural_human_prob >= 0.50)
-
-        # 1. Adult human mock bark imitation ("woof!", "bark!", "ruff!", "arf!", "bow-wow"):
-        # A mock bark is a short vocal burst with human vocal tract resonances
-        human_dog_imitation = bool(
-            has_human_tract and (75 <= med_f0 <= 350) and (dur_s <= 1.2) and
-            (
-                (hnr_db >= 22.0 and 750 <= f2 <= 1550) or
-                (300 <= f1 <= 850 and 750 <= f2 <= 1550 and mean_sf < 0.003) or
-                (hnr_db >= 32.0 and mean_sf < 0.0001) or
-                (sc > 2500 and fm_span < 15.0)
-            ) and not is_known_animal
-        )
-
-        # 2. Human falsetto / mock meow imitation:
-        # High-pitched vocalization (220-750 Hz) matching human vocal tract anatomy, narrow FM span
-        human_falsetto_meow = bool(
-            (has_human_tract or (dur_s >= 0.7 and 220 <= med_f0 <= 700)) and
-            (220 <= med_f0 <= 750) and
-            (hnr_db >= 10.0 or mean_sf < 0.03) and
-            (fm_span < 30.0) and
-            not is_known_animal
-        )
-
-        # 3. Human mock bird whistle:
-        human_bird_whistle = bool(
-            has_human_tract and (sc >= 1300) and (hnr_db >= 32.0) and mean_sf < 0.0005 and
-            not is_known_animal
-        )
-
-        # 4. Human cough / throat clearing burst:
-        human_cough_throat = bool(
-            (has_human_f1 or has_human_f2) and (has_human_vtl or has_human_disp) and (dur_s <= 0.8) and
-            not (f2 >= 1620 and (sc >= 700 or zcr >= 0.035)) and
-            not is_known_animal
-        )
-
-        is_human_imitation = bool(
-            human_dog_imitation or human_falsetto_meow or human_bird_whistle or human_cough_throat
-        )
-
-        # 5. Normal human conversational talking (speaking sentences/words, sustained voiced speech):
-        is_conversational_speech = bool(
-            has_human_tract and (70 <= med_f0 <= 320) and
-            (active_voiced_sec > 0.50 or dur_s >= 0.9) and
-            (200 <= f1 <= 950 or f1 == 0.0) and
-            not is_human_imitation and not is_known_animal
-        )
-
-        # ── Step 3.2: Genuine Animal Bioacoustics Identification ────────────
-        # Genuine canine bioacoustics:
-        # Real dog barks have high oral resonance F2 >= 1620 Hz (Husky 1746 Hz, Chihuahua 1920 Hz)
-        # or explosive onset / turbulent air escape (SF >= 0.004, rough phonation HNR < 24 dB)
-        is_genuine_dog = is_known_canine or (
-            (dur_s < 3.5 and rms >= 0.020) and
-            (
-                (f2 >= 1620 and (sc >= 700 or zcr >= 0.035) and hnr_db < 24.0 and dur_s < 0.65) or
-                (med_f0 >= 450 and f2 >= 1800 and dur_s < 1.1)
-            ) and not (is_human_imitation or is_conversational_speech)
-        )
-
-        # Genuine feline bioacoustics:
-        is_genuine_cat = is_known_feline or (
-            (med_f0 >= 280 and fm_span >= 35.0) and
-            not (is_human_imitation or is_conversational_speech)
-        )
-
-        # Genuine bird bioacoustics:
-        is_genuine_bird = is_known_bird or (
-            sc >= 2100 and (med_f0 >= 800 or sc >= 2600) and not (75 <= med_f0 <= 320 and dur_s < 0.8) and
-            not (is_human_imitation or is_conversational_speech)
-        )
-
-        # Genuine cetacean (whale / dolphin) bioacoustics:
-        is_genuine_cetacean = is_known_marine or (
-            ((med_f0 < 65 and dur_s >= 1.0) or (sc >= 3000 and (zcr >= 0.10 or med_f0 >= 2200))) and
-            not (is_human_imitation or is_conversational_speech)
-        )
-
-        # Genuine frog bioacoustics:
-        is_genuine_frog = is_known_frog or (
-            (140 <= med_f0 <= 650 and sc < 1800 and 3.0 <= hnr_db <= 22.0 and not has_human_tract) and
-            not (is_human_imitation or is_conversational_speech)
-        )
-
-        is_genuine_animal_acoustics = (
-            is_genuine_dog or is_genuine_cat or is_genuine_bird or
-            is_genuine_cetacean or is_genuine_frog
-        )
-
-        # Final decision logic
-        if is_human_imitation:
-            combined_human_prob = 0.94
-            is_human = True
-            is_conversational_speech = False
-        elif is_conversational_speech:
-            combined_human_prob = 0.88
-            is_human = True
-            is_human_imitation = False
-        elif is_genuine_animal_acoustics:
-            combined_human_prob = 0.03
-            is_human = False
-            is_human_imitation = False
-            is_conversational_speech = False
-        elif neural_detected_human:
-            combined_human_prob = neural_human_prob
-            is_human = True
-            is_conversational_speech = True
-        else:
-            combined_human_prob = 0.08
-            is_human = False
-            is_human_imitation = False
-            is_conversational_speech = False
-
-        combined_animal_prob = 1.0 - combined_human_prob
-
-        # Confidence level
-        if combined_human_prob > 0.85 or combined_human_prob < 0.20:
-            confidence = "high"
-        elif combined_human_prob > 0.70 or combined_human_prob < 0.35:
-            confidence = "medium"
-        else:
-            confidence = "low"
-
-        rejection_reason = ""
-        if is_human:
-            reasons = []
-            if human_dog_imitation:
-                reasons.append(f"human vocal pitch ({med_f0:.0f} Hz) and vowel tract resonance mimicking dog sound")
-            elif human_falsetto_meow:
-                reasons.append(f"human falsetto / vocal imitation ({med_f0:.0f} Hz) matching human vocal tract anatomy")
-            elif human_bird_whistle:
-                reasons.append(f"human oral whistle imitation ({sc:.0f} Hz) matching human vocal tract")
-            elif is_conversational_speech:
-                reasons.append(f"human conversational speech ({med_f0:.0f} Hz) detected without animal vocalization")
-            elif human_cough_throat:
-                reasons.append("human cough or throat sound detected")
-            elif neural_detected_human:
-                reasons.append("neural anti-spoofing detected human speech characteristics")
-
-            if formant_evidence.get("vtl_in_human_range"):
-                vtl = formant_evidence.get("vocal_tract_length_cm", 0.0)
-                reasons.append(f"vocal tract length ({vtl:.1f} cm) matches human anatomy (12.5-19.5 cm)")
-            if formant_evidence.get("f1_in_human_range") and formant_evidence.get("f2_in_human_range"):
-                reasons.append("formant pattern (F1/F2) matches human vocal resonances")
-            if formant_evidence.get("dispersion_in_human_range"):
-                disp = formant_evidence.get("dispersion_hz", 0.0)
-                reasons.append(f"formant dispersion ({disp:.0f} Hz) consistent with human pharynx (~900-1400 Hz)")
-            rejection_reason = "; ".join(reasons) if reasons else "Human vocal tract acoustics indicate imitation rather than animal vocalization"
-
-        return SpoofResult(
-            is_human=is_human,
-            human_probability=combined_human_prob,
-            animal_probability=combined_animal_prob,
-            formant_evidence=formant_evidence,
-            rejection_reason=rejection_reason,
-            confidence=confidence,
-            is_conversational_speech=is_conversational_speech,
-            is_human_imitation=is_human_imitation
-        )
+            return ecapa_prob
+        return None
 

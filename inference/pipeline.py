@@ -663,54 +663,63 @@ class AnimalVoxPipeline:
         human_speech_removed = False
         spoof_result = None
         if enable_modules:
-            # 1. Check if there is human speech mixed with a real animal vocalization
-            cleaned_clip, had_human_speech = self.animal_detector.vad.remove_human_speech(clip)
-            if had_human_speech:
-                cleaned_rms = float(np.sqrt(np.mean(cleaned_clip ** 2)))
-                if cleaned_rms >= 0.020:
-                    # Verify the isolated segment contains a genuine animal vocalization (not human imitation or speech)
-                    cleaned_spoof = self.anti_spoof.check(cleaned_clip, sr=AUDIO_CONFIG.sample_rate, filename=filename)
-                    if not cleaned_spoof.is_human:
-                        cleaned_det = self.animal_detector.detect(cleaned_clip, filename=filename)
-                        if cleaned_det.has_animal:
-                            clip = cleaned_clip
-                            spoof_result = cleaned_spoof
-                            human_speech_removed = True
-                            logger.info("Mixed audio: isolated animal vocalization and removed human talking.")
-
-            # 2. Check anti-spoofing on the active vocalization clip
+            # 1. ALWAYS check anti-spoofing on the ORIGINAL clip first
+            #    This prevents imitations from being split by VAD into
+            #    "human" + "animal-like" segments where the animal-like
+            #    segments bypass the spoof check.
             full_spoof = self.anti_spoof.check(clip, sr=AUDIO_CONFIG.sample_rate, filename=filename)
-            if spoof_result is None:
-                spoof_result = full_spoof
+            spoof_result = full_spoof
 
-            # 3. Handle human detection:
-            # ONLY reject if the clip is identified as human AND no genuine animal vocalization was isolated
-            if full_spoof.is_human and not human_speech_removed:
+            # 2. Handle human detection on the original clip
+            if full_spoof.is_human:
                 elapsed = time.time() - start_time
                 if getattr(full_spoof, "is_conversational_speech", False):
-                    # Normal conversational speech with no animal voice in audio
                     return {
                         "error": "no_animal_detected",
                         "animal_detected": False,
                         "translation": "",
-                        "message": "❓ No animal vocalization detected. The recording contains human speech, but no animal sounds to translate.",
+                        "message": "\u2753 No animal vocalization detected. The recording contains human speech, but no animal sounds to translate.",
                         "rejection_reason": full_spoof.rejection_reason or "Human conversational speech detected without animal vocalization.",
                         "confidence": full_spoof.confidence,
                         "processing_time_ms": int(elapsed * 1000),
                     }
                 else:
-                    # Intentional human imitation of animal voices detected
                     return {
                         "error": "human_detected",
                         "human_detected": True,
                         "is_human": True,
                         "translation": "",
-                        "message": "🚫 Human voice detected imitating an animal! AnimalVox AI only translates real animal vocalizations.",
+                        "message": "\ud83d\udeab This doesn't sound like an animal. AnimalVox AI only translates real animal vocalizations.",
                         "human_probability": full_spoof.human_probability,
                         "rejection_reason": full_spoof.rejection_reason or "Human vocal imitation detected.",
                         "confidence": full_spoof.confidence,
                         "processing_time_ms": int(elapsed * 1000),
                     }
+
+            # 3. Handle uncertain result — prompt re-record
+            if getattr(full_spoof, "is_uncertain", False):
+                elapsed = time.time() - start_time
+                return {
+                    "error": "uncertain_audio",
+                    "uncertain": True,
+                    "translation": "",
+                    "message": "\ud83d\udd0d We couldn't confidently identify this as an animal sound. Please try recording again with a clearer sample.",
+                    "rejection_reason": full_spoof.rejection_reason or "Ambiguous audio — could not confirm animal vocalization.",
+                    "confidence": full_spoof.confidence,
+                    "processing_time_ms": int(elapsed * 1000),
+                }
+
+            # 4. If clip passed anti-spoof AND has mixed human speech,
+            #    try to isolate the animal vocalization for cleaner translation
+            cleaned_clip, had_human_speech = self.animal_detector.vad.remove_human_speech(clip)
+            if had_human_speech:
+                cleaned_rms = float(np.sqrt(np.mean(cleaned_clip ** 2)))
+                if cleaned_rms >= 0.020:
+                    cleaned_det = self.animal_detector.detect(cleaned_clip, filename=filename)
+                    if cleaned_det.has_animal:
+                        clip = cleaned_clip
+                        human_speech_removed = True
+                        logger.info("Mixed audio: isolated animal vocalization and removed human talking.")
 
         # Stage 2: Feature extraction (3 parallel paths)
         audio_embed, cnn_features, prosodic_tensor = self._extract_features(clip)
@@ -1082,24 +1091,17 @@ class AnimalVoxPipeline:
 
         # ── Stage 0.2: Anti-Spoofing & Mixed Audio Verification (Stream) ──
         human_speech_removed = False
-        cleaned_clip, had_human_speech = self.animal_detector.vad.remove_human_speech(clip)
-        if had_human_speech:
-            cleaned_rms = float(np.sqrt(np.mean(cleaned_clip ** 2)))
-            if cleaned_rms >= 0.020:
-                cleaned_spoof = self.anti_spoof.check(cleaned_clip, sr=AUDIO_CONFIG.sample_rate, filename=filename)
-                if not cleaned_spoof.is_human:
-                    clip = cleaned_clip
-                    human_speech_removed = True
-                    logger.info("Mixed audio (stream): isolated animal vocalization and removed human talking.")
 
+        # Check anti-spoofing on the ORIGINAL clip first
         full_spoof = self.anti_spoof.check(clip, sr=AUDIO_CONFIG.sample_rate, filename=filename)
-        if full_spoof.is_human and not human_speech_removed:
+
+        if full_spoof.is_human:
             if getattr(full_spoof, "is_conversational_speech", False):
                 yield {
                     "type": "no_animal_detected",
                     "animal_detected": False,
                     "no_animal": True,
-                    "message": "❓ No animal vocalization detected in this audio. Human conversational speech was detected, but no animal sounds to translate.",
+                    "message": "\u2753 No animal vocalization detected. Human speech was detected, but no animal sounds to translate.",
                     "rejection_reason": full_spoof.rejection_reason or "Human speech detected without animal vocalization.",
                 }
                 return
@@ -1108,11 +1110,29 @@ class AnimalVoxPipeline:
                     "type": "human_detected",
                     "human_detected": True,
                     "is_human": True,
-                    "message": "🚫 Human voice detected imitating an animal!",
+                    "message": "\ud83d\udeab This doesn't sound like an animal.",
                     "human_probability": full_spoof.human_probability,
                     "rejection_reason": full_spoof.rejection_reason or "Human speech or vocal imitation detected.",
                 }
                 return
+
+        if getattr(full_spoof, "is_uncertain", False):
+            yield {
+                "type": "uncertain_audio",
+                "uncertain": True,
+                "message": "\ud83d\udd0d We couldn't confidently identify this as an animal sound. Please try recording again.",
+                "rejection_reason": full_spoof.rejection_reason or "Ambiguous audio.",
+            }
+            return
+
+        # If passed, try to remove background speech for cleaner translation
+        cleaned_clip, had_human_speech = self.animal_detector.vad.remove_human_speech(clip)
+        if had_human_speech:
+            cleaned_rms = float(np.sqrt(np.mean(cleaned_clip ** 2)))
+            if cleaned_rms >= 0.020:
+                clip = cleaned_clip
+                human_speech_removed = True
+                logger.info("Mixed audio (stream): isolated animal vocalization.")
 
         # Feature extraction
         audio_embed, cnn_features, prosodic_tensor = self._extract_features(clip)
