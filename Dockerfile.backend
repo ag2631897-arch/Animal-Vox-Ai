@@ -21,12 +21,11 @@ RUN pip install --no-cache-dir -r requirements.backend.txt
 # Copy application source code
 COPY . .
 
-# Fetch PANNs AudioSet tagger checkpoint & labels for Stage 0 audio gatekeeping
+# Ensure weights directory and AudioSet label index exist
 RUN mkdir -p /app/models/weights/panns && \
-    curl -fsSL -L "https://storage.googleapis.com/us_audioset/youtube_corpus/v1/csv/class_labels_indices.csv" \
-      -o /app/models/weights/panns/class_labels_indices.csv || true && \
-    curl -fsSL -L "https://zenodo.org/records/3987831/files/Cnn14_16k_mAP%3D0.438.pth?download=1" \
-      -o /app/models/weights/panns/Cnn14_16k_mAP=0.438.pth || true
+    (curl -fsSL -L --connect-timeout 10 --max-time 20 \
+      "https://storage.googleapis.com/us_audioset/youtube_corpus/v1/csv/class_labels_indices.csv" \
+      -o /app/models/weights/panns/class_labels_indices.csv || true)
 
 EXPOSE 8000
 
