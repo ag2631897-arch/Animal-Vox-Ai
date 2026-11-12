@@ -6,6 +6,7 @@ librosa>=0.10.0
 soundfile>=0.12.0
 audioread>=3.0.0
 praat-parselmouth>=0.4.3
+torchlibrosa>=0.1.0
 
 # Models & Vector DB
 huggingface-hub>=0.20.0
