@@ -1,0 +1,34 @@
+# Production Backend Runtime Dependencies (CPU Inference + API + NeonDB Auth)
+# PyTorch CPU wheels are installed separately in Dockerfile.backend
+
+# Audio Processing
+librosa>=0.10.0
+soundfile>=0.12.0
+audioread>=3.0.0
+praat-parselmouth>=0.4.3
+
+# Models & Vector DB
+huggingface-hub>=0.20.0
+safetensors>=0.4.0
+timm>=0.9.0
+chromadb>=0.4.0
+
+# ML & Scientific
+scikit-learn>=1.3.0
+numpy>=1.24.0
+scipy>=1.11.0
+pandas>=2.0.0
+
+# Web API, LLM & Auth/DB
+groq>=0.4.0
+fastapi>=0.104.0
+uvicorn>=0.24.0
+python-multipart>=0.0.6
+psycopg2-binary>=2.9.9
+PyJWT>=2.8.0
+bcrypt>=4.1.0
+
+# Utilities
+requests>=2.31.0
+python-dotenv>=1.0.0
+pyyaml>=6.0.0
