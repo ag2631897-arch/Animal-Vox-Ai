@@ -28,7 +28,7 @@ import numpy as np
 import torch
 import librosa
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, AsyncGenerator
+from typing import Dict, List, Optional, Tuple, AsyncGenerator, Any
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
