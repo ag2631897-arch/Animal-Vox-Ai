@@ -11,11 +11,17 @@ import AudioDropZone from '../ui/AudioDropZone'
 import AutoSpeciesToggle from '../ui/AutoSpeciesToggle'
 import { SpeciesMark } from '../ui/SpeciesMark'
 import { useAudioRecorder } from '../../hooks/useAudioRecorder'
-import { useAppStore } from '../../store/useAppStore'
+import { useAppStore, getUserStorageKey } from '../../store/useAppStore'
 import { createSpeechUtterance } from '../../hooks/speech'
 import { translateAudio } from '../../lib/api'
 import { preAnalyzeAudio, classifyDetectionResult } from '../../hooks/useAudioAnalyzer'
 import { readableSignal, readableSpecies } from '../../lib/labels'
+import {
+  getCachedSessionAudio,
+  loadSessionAudio,
+  saveSessionAudio,
+  clearSessionAudio,
+} from '../../lib/audioStorage'
 
 function formatTime(s) {
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
@@ -28,30 +34,48 @@ function displayBehavior(result) { return readableSignal(result?.vocalization_ty
  * Users can record or upload audio clips and get translations directly.
  */
 export default function QuickTranslate() {
+  const authUser = useAppStore((s) => s.authUser)
+  const userKey = getUserStorageKey(authUser) || 'guest'
+
+  const quickSession = useAppStore((s) => s.quickSession)
+  const setQuickSession = useAppStore((s) => s.setQuickSession)
+  const clearQuickSession = useAppStore((s) => s.clearQuickSession)
   const addTranslation = useAppStore((s) => s.addTranslation)
   const voice = useAppStore((s) => s.voice)
   const speed = useAppStore((s) => s.speed)
   const autoDetect = useAppStore((s) => s.autoSpeciesDetection)
   const toggleAutoDetect = useAppStore((s) => s.toggleAutoSpeciesDetection)
-  const [selectedSpecies, setSelectedSpecies] = useState('dogs')
+
+  const cachedAudio = getCachedSessionAudio(userKey, 'quick')
+  const initialAnalysis = quickSession?.analysis || null
+  const initialWordsCount = initialAnalysis?.translation
+    ? initialAnalysis.translation.split(/\s+/).length
+    : 0
+
+  const [selectedSpecies, setSelectedSpecies] = useState(() => quickSession?.selectedSpecies || 'dogs')
   const autoDetectRef = useRef(autoDetect)
   const selectedSpeciesRef = useRef(selectedSpecies)
 
   useEffect(() => { autoDetectRef.current = autoDetect }, [autoDetect])
   useEffect(() => { selectedSpeciesRef.current = selectedSpecies }, [selectedSpecies])
 
-  const [analysis, setAnalysis] = useState(null)
-  const [saved, setSaved] = useState(false)
+  const [analysis, setAnalysis] = useState(() => initialAnalysis)
+  const [saved, setSaved] = useState(() => Boolean(quickSession?.saved))
   const [speaking, setSpeaking] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [detectionType, setDetectionType] = useState(null)
   const [detectedAnimal, setDetectedAnimal] = useState('')
-  const [uploadedFileName, setUploadedFileName] = useState('')
-  const [visibleWords, setVisibleWords] = useState(0)
-  const [typewriterDone, setTypewriterDone] = useState(false)
+  const [uploadedFileName, setUploadedFileName] = useState(
+    () => quickSession?.uploadedFileName || cachedAudio?.fileName || ''
+  )
+  const [uploadedFileSize, setUploadedFileSize] = useState(
+    () => quickSession?.fileSize || cachedAudio?.fileSize || 0
+  )
+  const [visibleWords, setVisibleWords] = useState(() => initialWordsCount)
+  const [typewriterDone, setTypewriterDone] = useState(() => Boolean(initialAnalysis?.translation))
   const audioRef = useRef(null)
   const twTimerRef = useRef(null)
-  const hasAutoSpokenRef = useRef(false)
+  const hasAutoSpokenRef = useRef(Boolean(initialAnalysis?.translation))
 
   const analyzeRecording = useCallback(async ({ blob, fileName }) => {
     setDetectionType(null)
@@ -60,9 +84,22 @@ export default function QuickTranslate() {
     setVisibleWords(0)
     setTypewriterDone(false)
     hasAutoSpokenRef.current = false
-    setUploadedFileName(fileName || '')
+    const resolvedName = fileName || 'Recording'
+    setUploadedFileName(resolvedName)
+    setUploadedFileSize(blob?.size || 0)
 
-    const preCheck = await preAnalyzeAudio(blob, fileName)
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current = null
+    }
+
+    await saveSessionAudio(userKey, 'quick', {
+      blob,
+      fileName: resolvedName,
+      fileSize: blob?.size || 0,
+    })
+
+    const preCheck = await preAnalyzeAudio(blob, resolvedName)
     if (preCheck.type === 'no_animal' || preCheck.type === 'music_detected') {
       setDetectionType(preCheck.type)
       throw new Error(preCheck.reason || 'No animal vocalizations detected.')
@@ -72,7 +109,7 @@ export default function QuickTranslate() {
     try {
       result = await translateAudio({
         audio: blob,
-        fileName,
+        fileName: resolvedName,
         species: autoDetectRef.current ? '' : selectedSpeciesRef.current,
         petId: null,
       })
@@ -91,6 +128,16 @@ export default function QuickTranslate() {
 
     setAnalysis(result)
     setSaved(false)
+    setQuickSession({
+      analysis: result,
+      uploadedFileName: resolvedName,
+      fileSize: blob?.size || 0,
+      saved: false,
+      selectedSpecies: selectedSpeciesRef.current,
+      hasAudio: true,
+      updatedAt: Date.now(),
+    })
+
     addTranslation({
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       createdAt: new Date().toISOString(),
@@ -102,16 +149,49 @@ export default function QuickTranslate() {
       confidence: result.behaviors?.[0]?.score ?? null,
       result,
     })
-  }, [addTranslation])
+  }, [addTranslation, setQuickSession, userKey])
 
-  const recorder = useAudioRecorder(analyzeRecording)
+  const recorder = useAudioRecorder(analyzeRecording, {
+    status: initialAnalysis ? 'result' : 'idle',
+    audioUrl: cachedAudio?.audioUrl || '',
+  })
+
+  // Restore persisted session & IndexedDB audio across page refreshes and server sync
+  useEffect(() => {
+    let active = true
+    if (quickSession?.analysis && !analysis) {
+      const words = quickSession.analysis.translation?.split(/\s+/) || []
+      setAnalysis(quickSession.analysis)
+      setSaved(Boolean(quickSession.saved))
+      setUploadedFileName(quickSession.uploadedFileName || '')
+      setUploadedFileSize(quickSession.fileSize || 0)
+      setVisibleWords(words.length)
+      setTypewriterDone(true)
+      hasAutoSpokenRef.current = true
+      recorder.setStatus('result')
+    }
+    loadSessionAudio(userKey, 'quick').then((stored) => {
+      if (!active || !stored?.audioUrl) return
+      if (!recorder.audioUrl) {
+        recorder.setAudioUrl(stored.audioUrl)
+      }
+      if (!uploadedFileName && stored.fileName) {
+        setUploadedFileName(stored.fileName)
+      }
+      if (!uploadedFileSize && stored.fileSize) {
+        setUploadedFileSize(stored.fileSize)
+      }
+    })
+    return () => { active = false }
+  }, [userKey, quickSession])
+
   const isRecording = recorder.status === 'recording'
   const isProcessing = recorder.status === 'processing'
-  const isResult = recorder.status === 'result' && analysis
+  const isResult = Boolean(analysis) && !isRecording && !isProcessing
   const confidence = analysis?.behaviors?.[0]?.score || 0
   const translationWords = analysis?.translation?.split(/\s+/) || []
 
-  // Typewriter + auto-speak
+  // Typewriter + auto-speak (only on fresh translation, not when returning to tab)
   useEffect(() => {
     if (!isResult || !analysis?.translation) return
     if (hasAutoSpokenRef.current) return
@@ -149,7 +229,9 @@ export default function QuickTranslate() {
 
   const replayOriginal = async () => {
     if (!recorder.audioUrl) return
-    if (!audioRef.current) audioRef.current = new Audio(recorder.audioUrl)
+    if (!audioRef.current || audioRef.current.src !== recorder.audioUrl) {
+      audioRef.current = new Audio(recorder.audioUrl)
+    }
     audioRef.current.currentTime = 0
     try { await audioRef.current.play() } catch { /* gesture */ }
   }
@@ -163,7 +245,41 @@ export default function QuickTranslate() {
   }
 
   const chooseFile = (file) => {
-    if (file) { setUploadedFileName(file.name); recorder.processFile(file) }
+    if (file) {
+      setUploadedFileName(file.name)
+      setUploadedFileSize(file.size || 0)
+      recorder.processFile(file)
+    }
+  }
+
+  const clearCurrentAudio = useCallback(() => {
+    window.speechSynthesis?.cancel()
+    clearInterval(twTimerRef.current)
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current = null
+    }
+    recorder.reset()
+    setAnalysis(null)
+    setSaved(false)
+    setSpeaking(false)
+    setUploadedFileName('')
+    setUploadedFileSize(0)
+    setVisibleWords(0)
+    setTypewriterDone(false)
+    setDetectionType(null)
+    setDetectedAnimal('')
+    hasAutoSpokenRef.current = false
+    clearQuickSession()
+    clearSessionAudio(userKey, 'quick')
+  }, [recorder, clearQuickSession, userKey])
+
+  const toggleSave = () => {
+    const next = !saved
+    setSaved(next)
+    if (quickSession) {
+      setQuickSession({ ...quickSession, saved: next })
+    }
   }
 
   return (
@@ -189,7 +305,14 @@ export default function QuickTranslate() {
 
           {isRecording && <WaveformBars active />}
 
-          <AudioDropZone onFile={chooseFile} disabled={isProcessing || isRecording} audioUrl={recorder.audioUrl} fileName={uploadedFileName} />
+          <AudioDropZone
+            onFile={chooseFile}
+            disabled={isProcessing || isRecording}
+            audioUrl={recorder.audioUrl}
+            fileName={uploadedFileName}
+            fileSize={uploadedFileSize}
+            onClear={clearCurrentAudio}
+          />
           <AutoSpeciesToggle enabled={autoDetect} onToggle={toggleAutoDetect} />
           {autoDetect ? (
             <p className="inline-note">Species will be detected automatically from the audio.</p>
@@ -278,7 +401,9 @@ export default function QuickTranslate() {
                 {typewriterDone && (
                   <motion.div className="replay-bar" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
                     <button className="replay-voice-btn" onClick={replayVoice} disabled={speaking}><Volume2 size={15} /><span>{speaking ? 'Speaking…' : 'Replay'}</span></button>
-                    <button className="ghost-icon" onClick={replayOriginal} aria-label="Replay original"><RefreshCw size={15} /></button>
+                    {recorder.audioUrl && (
+                      <button className="ghost-icon" onClick={replayOriginal} aria-label="Replay original"><RefreshCw size={15} /></button>
+                    )}
                   </motion.div>
                 )}
 
@@ -290,7 +415,7 @@ export default function QuickTranslate() {
                 </div>
 
                 <div className="result-actions">
-                  <button className={`ghost-action ${saved ? 'saved' : ''}`} onClick={() => setSaved((v) => !v)}>{saved ? <Check size={15} /> : <Save size={15} />}{saved ? 'Saved' : 'Save'}</button>
+                  <button className={`ghost-action ${saved ? 'saved' : ''}`} onClick={toggleSave}>{saved ? <Check size={15} /> : <Save size={15} />}{saved ? 'Saved' : 'Save'}</button>
                   <button className="ghost-action" onClick={share}><Share2 size={15} />Share</button>
                 </div>
               </GlassCard>

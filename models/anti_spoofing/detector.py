@@ -445,9 +445,10 @@ class AntiSpoofingGatekeeper:
 
         # ── Log active mode ────────────────────────────────────────
         if self.embedding_analyzer.has_trained_weights:
+            self.has_trained_weights = True
             logger.info(
                 "AntiSpoofingGatekeeper: \U0001f31f EMBEDDING CLASSIFIER ACTIVE "
-                "(per-segment BEATs + MLP, 5-class)"
+                "(per-segment PANNs CNN14 + MLP)"
             )
         elif self.has_feature_weights and self.has_trained_weights:
             logger.info(
@@ -548,9 +549,7 @@ class AntiSpoofingGatekeeper:
             }
 
             if decision.outcome == "human":
-                # Determine sub-type
-                is_imitation = decision.imitation_ratio > decision.human_ratio * 0.4
-                is_speech = not is_imitation
+                is_speech = (decision.dominant_class == "human_speech")
                 return SpoofResult(
                     is_human=True,
                     human_probability=decision.confidence,
@@ -559,7 +558,7 @@ class AntiSpoofingGatekeeper:
                     rejection_reason=decision.reason,
                     confidence="high" if decision.confidence > 0.7 else "medium",
                     is_conversational_speech=is_speech,
-                    is_human_imitation=is_imitation,
+                    is_human_imitation=not is_speech,
                     detection_mode="embedding",
                 )
 

@@ -1,23 +1,73 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Radar, Radio, Upload } from 'lucide-react'
+import { FileAudio, Radar, Radio, Trash2, Upload } from 'lucide-react'
 import GlassCard from '../ui/GlassCard'
 import ConfidenceBar from '../ui/ConfidenceBar'
 import SkeletonCard from '../ui/SkeletonCard'
 import { SpeciesMark } from '../ui/SpeciesMark'
 import { useAudioRecorder } from '../../hooks/useAudioRecorder'
+import { useAppStore, getUserStorageKey } from '../../store/useAppStore'
 import { translateAudio } from '../../lib/api'
 import { readableSpecies } from '../../lib/labels'
+import {
+  getCachedSessionAudio,
+  loadSessionAudio,
+  saveSessionAudio,
+  clearSessionAudio,
+} from '../../lib/audioStorage'
 
 export default function DetectionScreen() {
-  const [result, setResult] = useState(null)
+  const authUser = useAppStore((s) => s.authUser)
+  const userKey = getUserStorageKey(authUser) || 'guest'
+  const detectSession = useAppStore((s) => s.detectSession)
+  const setDetectSession = useAppStore((s) => s.setDetectSession)
+  const clearDetectSession = useAppStore((s) => s.clearDetectSession)
+
+  const cachedAudio = getCachedSessionAudio(userKey, 'detect')
+  const [result, setResult] = useState(() => detectSession?.result || null)
+  const [fileName, setFileName] = useState(() => detectSession?.uploadedFileName || cachedAudio?.fileName || '')
   const uploadRef = useRef(null)
-  const analyze = useCallback(async ({ blob, fileName }) => {
-    const response = await translateAudio({ audio: blob, fileName })
+
+  const analyze = useCallback(async ({ blob, fileName: fname }) => {
+    const resolvedName = fname || 'Recording'
+    setFileName(resolvedName)
+    await saveSessionAudio(userKey, 'detect', {
+      blob,
+      fileName: resolvedName,
+      fileSize: blob?.size || 0,
+    })
+    const response = await translateAudio({ audio: blob, fileName: resolvedName })
     if (response.error) throw new Error(response.rejection_reason || response.message || 'No animal vocalization could be confirmed.')
     setResult(response)
-  }, [])
-  const recorder = useAudioRecorder(analyze)
+    setDetectSession({
+      result: response,
+      uploadedFileName: resolvedName,
+      fileSize: blob?.size || 0,
+      hasAudio: true,
+      updatedAt: Date.now(),
+    })
+  }, [setDetectSession, userKey])
+
+  const recorder = useAudioRecorder(analyze, {
+    status: detectSession?.result ? 'result' : 'idle',
+    audioUrl: cachedAudio?.audioUrl || '',
+  })
+
+  useEffect(() => {
+    let active = true
+    if (detectSession?.result && !result) {
+      setResult(detectSession.result)
+      setFileName(detectSession.uploadedFileName || '')
+      recorder.setStatus('result')
+    }
+    loadSessionAudio(userKey, 'detect').then((stored) => {
+      if (!active || !stored?.audioUrl) return
+      if (!recorder.audioUrl) recorder.setAudioUrl(stored.audioUrl)
+      if (!fileName && stored.fileName) setFileName(stored.fileName)
+    })
+    return () => { active = false }
+  }, [userKey, detectSession])
+
   const active = recorder.status === 'recording'
   const loading = recorder.status === 'processing'
   const candidates = result?.auto_detection?.species_detections || (result ? [{
@@ -25,10 +75,22 @@ export default function DetectionScreen() {
     display_name: result.species,
     confidence: result.behaviors?.[0]?.score,
   }] : [])
+
   const selectFile = (event) => {
     const file = event.target.files?.[0]
-    if (file) recorder.processFile(file)
+    if (file) {
+      setFileName(file.name)
+      recorder.processFile(file)
+    }
     event.target.value = ''
+  }
+
+  const clearDetection = () => {
+    recorder.reset()
+    setResult(null)
+    setFileName('')
+    clearDetectSession()
+    clearSessionAudio(userKey, 'detect')
   }
 
   return (
@@ -39,7 +101,27 @@ export default function DetectionScreen() {
           <div className="radar-grid"><div className="radar-sweep" /><span className="radar-axis horizontal" /><span className="radar-axis vertical" /><span className="radar-center"><Radio size={17} /></span></div>
           <button className={`radar-action ${active ? 'active' : ''}`} type="button" onClick={recorder.toggle} disabled={loading}><Radar size={17} />{active ? 'Stop recording' : loading ? 'Analyzing' : 'Record a clip'}</button>
           <input ref={uploadRef} type="file" accept="audio/*" hidden onChange={selectFile} />
-          <button className="text-button demo-button" type="button" disabled={active || loading} onClick={() => uploadRef.current?.click()}><Upload size={14} /> Upload audio file</button>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' }}>
+            <button className="text-button demo-button" type="button" disabled={active || loading} onClick={() => uploadRef.current?.click()}>
+              <Upload size={14} /> {result || fileName ? 'Upload another file' : 'Upload audio file'}
+            </button>
+            {(result || fileName) && (
+              <button
+                className="text-button demo-button"
+                type="button"
+                disabled={active || loading}
+                onClick={clearDetection}
+                style={{ color: '#F87171' }}
+              >
+                <Trash2 size={14} /> Remove
+              </button>
+            )}
+          </div>
+          {fileName && (
+            <p className="inline-note" style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
+              <FileAudio size={13} /> {fileName}
+            </p>
+          )}
           {recorder.error && <p className="inline-note error-note" role="alert">{recorder.error}</p>}
         </div>
         <section className="detection-results">

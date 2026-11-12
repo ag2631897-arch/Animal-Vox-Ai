@@ -32,10 +32,12 @@ export default function Settings() {
   const [tab, setTab] = useState('My Pets')
   const [form, setForm] = useState(null)
   const [photo, setPhoto] = useState('')
-  const [savedAccount] = useState(readSavedAccount)
-  const [accountAvatar, setAccountAvatar] = useState(savedAccount.accountAvatar || '')
-  const [accountName, setAccountName] = useState(savedAccount.accountName || '')
-  const [accountEmail, setAccountEmail] = useState(savedAccount.accountEmail || '')
+  const accountProfile = useAppStore((state) => state.accountProfile)
+  const setAccountProfile = useAppStore((state) => state.setAccountProfile)
+  const authUser = useAppStore((state) => state.authUser)
+  const [accountAvatar, setAccountAvatar] = useState(() => accountProfile?.accountAvatar || authUser?.avatar_url || '')
+  const [accountName, setAccountName] = useState(() => accountProfile?.accountName || authUser?.name || '')
+  const [accountEmail, setAccountEmail] = useState(() => accountProfile?.accountEmail || authUser?.email || '')
   const [notice, setNotice] = useState('')
   const tabLoading = useSkeletonLoader(550, true, tab)
   const fileRef = useRef(null)
@@ -51,15 +53,15 @@ export default function Settings() {
   const setVoice = useAppStore((state) => state.setVoice)
   const speed = useAppStore((state) => state.speed)
   const setSpeed = useAppStore((state) => state.setSpeed)
-  const authUser = useAppStore((state) => state.authUser)
   const activePet = useAppStore((state) => state.pets.find((pet) => pet.id === state.activePetId))
 
   const [hexDrafts, setHexDrafts] = useState(theme)
   useEffect(() => setHexDrafts(theme), [theme])
   useEffect(() => {
-    setAccountName((current) => current || authUser?.name || '')
-    setAccountEmail((current) => current || authUser?.email || '')
-  }, [authUser])
+    setAccountName(accountProfile?.accountName || authUser?.name || '')
+    setAccountEmail(accountProfile?.accountEmail || authUser?.email || '')
+    setAccountAvatar(accountProfile?.accountAvatar || authUser?.avatar_url || '')
+  }, [authUser?.id, authUser?.email, accountProfile])
 
   const notify = (message) => {
     setNotice(message)
@@ -90,8 +92,8 @@ export default function Settings() {
   }
   const saveTheme = () => notify(`${presetName} saved on this device.`)
   const saveAccount = () => {
-    try { localStorage.setItem('animalvox-account', JSON.stringify({ accountName, accountEmail, accountAvatar })) } catch { /* Private browsing may block local storage. */ }
-    notify('Account details saved on this device.')
+    setAccountProfile({ accountName, accountEmail, accountAvatar })
+    notify('Account details saved to your profile.')
   }
 
   return <div className="settings-screen">

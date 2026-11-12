@@ -581,6 +581,31 @@ class AnimalVoxPipeline:
         }
         return emotion_map.get(behavior, "unknown")
 
+    def _select_best_clip(self, clips: List[np.ndarray]) -> np.ndarray:
+        """Select the 5s clip with the strongest animal vocalization (via PANNs CNN14), or highest RMS."""
+        if len(clips) == 1:
+            return clips[0]
+        try:
+            from models.audio_tagger import get_tagger
+            tagger = get_tagger(device=self.device)
+            if tagger.available:
+                best_clip = None
+                best_score = -1.0
+                for c in clips[:8]:
+                    res = tagger.tag(c, sr=AUDIO_CONFIG.sample_rate)
+                    mus = res.clip_groups.get("music", 0.0)
+                    if mus >= 0.60 and mus > res.any_animal_prob * 1.15:
+                        continue
+                    score = res.any_animal_prob - 0.15 * res.clip_groups.get("speech", 0.0) - 0.25 * mus
+                    if res.any_animal_prob >= 0.20 and score > best_score:
+                        best_score = score
+                        best_clip = c
+                if best_clip is not None:
+                    return best_clip
+        except Exception as e:
+            logger.debug(f"Clip selection fallback to RMS: {e}")
+        return max(clips, key=lambda c: float(np.sqrt(np.mean(c**2))))
+
     async def translate(self, audio_path: str = None, audio_bytes: bytes = None,
                         audio_format: str = "wav", species: str = None,
                         pet_id: str = None, photo_features: torch.Tensor = None,
@@ -622,8 +647,8 @@ class AnimalVoxPipeline:
         if not clips:
             return {"error": "no_animal_detected", "animal_detected": False, "translation": "", "message": "No audio content detected"}
 
-        # Select the clip with highest acoustic vocal energy (avoids silent pre-roll in longer recordings)
-        clip = max(clips, key=lambda c: float(np.sqrt(np.mean(c**2))))
+        # Select the clip with strongest animal vocalization (or highest RMS)
+        clip = self._select_best_clip(clips)
 
         # ── Stage 0.1: Music / Song / BGM and Non-Animal SFX Filter ────
         from models.music_detector import detect_music_or_sfx
@@ -678,7 +703,7 @@ class AnimalVoxPipeline:
                         "error": "no_animal_detected",
                         "animal_detected": False,
                         "translation": "",
-                        "message": "\u2753 No animal vocalization detected. The recording contains human speech, but no animal sounds to translate.",
+                        "message": "❓ No animal vocalization detected. The recording contains human speech, but no animal sounds to translate.",
                         "rejection_reason": full_spoof.rejection_reason or "Human conversational speech detected without animal vocalization.",
                         "confidence": full_spoof.confidence,
                         "processing_time_ms": int(elapsed * 1000),
@@ -689,7 +714,7 @@ class AnimalVoxPipeline:
                         "human_detected": True,
                         "is_human": True,
                         "translation": "",
-                        "message": "\ud83d\udeab This doesn't sound like an animal. AnimalVox AI only translates real animal vocalizations.",
+                        "message": "🚫 This doesn't sound like an animal. AnimalVox AI only translates real animal vocalizations.",
                         "human_probability": full_spoof.human_probability,
                         "rejection_reason": full_spoof.rejection_reason or "Human vocal imitation detected.",
                         "confidence": full_spoof.confidence,
@@ -703,18 +728,19 @@ class AnimalVoxPipeline:
                     "error": "uncertain_audio",
                     "uncertain": True,
                     "translation": "",
-                    "message": "\ud83d\udd0d We couldn't confidently identify this as an animal sound. Please try recording again with a clearer sample.",
+                    "message": "🔍 We couldn't confidently identify this as an animal sound. Please try recording again with a clearer sample.",
                     "rejection_reason": full_spoof.rejection_reason or "Ambiguous audio — could not confirm animal vocalization.",
                     "confidence": full_spoof.confidence,
                     "processing_time_ms": int(elapsed * 1000),
                 }
 
             # 4. If clip passed anti-spoof AND has mixed human speech,
-            #    try to isolate the animal vocalization for cleaner translation
+            #    isolate the animal vocalization segments via PANNs CNN14.
             cleaned_clip, had_human_speech = self.animal_detector.vad.remove_human_speech(clip)
             if had_human_speech:
-                cleaned_rms = float(np.sqrt(np.mean(cleaned_clip ** 2)))
-                if cleaned_rms >= 0.020:
+                nz = cleaned_clip[np.abs(cleaned_clip) > 1e-4]
+                active_rms = float(np.sqrt(np.mean(nz ** 2))) if len(nz) > 0 else 0.0
+                if active_rms >= 0.015:
                     cleaned_det = self.animal_detector.detect(cleaned_clip, filename=filename)
                     if cleaned_det.has_animal:
                         clip = cleaned_clip
@@ -1056,8 +1082,8 @@ class AnimalVoxPipeline:
             yield {"type": "no_animal", "message": "No audio content detected"}
             return
 
-        # Select the clip with highest acoustic vocal energy (avoids silent pre-roll)
-        clip = max(clips, key=lambda c: float(np.sqrt(np.mean(c**2))))
+        # Select the clip with strongest animal vocalization (or highest RMS)
+        clip = self._select_best_clip(clips)
 
         # ── Stage 0.1: Music / Song / BGM and Non-Animal SFX Filter ────
         from models.music_detector import detect_music_or_sfx
@@ -1101,7 +1127,7 @@ class AnimalVoxPipeline:
                     "type": "no_animal_detected",
                     "animal_detected": False,
                     "no_animal": True,
-                    "message": "\u2753 No animal vocalization detected. Human speech was detected, but no animal sounds to translate.",
+                    "message": "❓ No animal vocalization detected. Human speech was detected, but no animal sounds to translate.",
                     "rejection_reason": full_spoof.rejection_reason or "Human speech detected without animal vocalization.",
                 }
                 return
@@ -1110,7 +1136,7 @@ class AnimalVoxPipeline:
                     "type": "human_detected",
                     "human_detected": True,
                     "is_human": True,
-                    "message": "\ud83d\udeab This doesn't sound like an animal.",
+                    "message": "🚫 This doesn't sound like an animal.",
                     "human_probability": full_spoof.human_probability,
                     "rejection_reason": full_spoof.rejection_reason or "Human speech or vocal imitation detected.",
                 }
@@ -1120,19 +1146,22 @@ class AnimalVoxPipeline:
             yield {
                 "type": "uncertain_audio",
                 "uncertain": True,
-                "message": "\ud83d\udd0d We couldn't confidently identify this as an animal sound. Please try recording again.",
+                "message": "🔍 We couldn't confidently identify this as an animal sound. Please try recording again.",
                 "rejection_reason": full_spoof.rejection_reason or "Ambiguous audio.",
             }
             return
 
-        # If passed, try to remove background speech for cleaner translation
+        # If passed, isolate animal segments from background human speech via PANNs CNN14
         cleaned_clip, had_human_speech = self.animal_detector.vad.remove_human_speech(clip)
         if had_human_speech:
-            cleaned_rms = float(np.sqrt(np.mean(cleaned_clip ** 2)))
-            if cleaned_rms >= 0.020:
-                clip = cleaned_clip
-                human_speech_removed = True
-                logger.info("Mixed audio (stream): isolated animal vocalization.")
+            nz = cleaned_clip[np.abs(cleaned_clip) > 1e-4]
+            active_rms = float(np.sqrt(np.mean(nz ** 2))) if len(nz) > 0 else 0.0
+            if active_rms >= 0.015:
+                cleaned_det = self.animal_detector.detect(cleaned_clip, filename=filename)
+                if cleaned_det.has_animal:
+                    clip = cleaned_clip
+                    human_speech_removed = True
+                    logger.info("Mixed audio (stream): isolated animal vocalization.")
 
         # Feature extraction
         audio_embed, cnn_features, prosodic_tensor = self._extract_features(clip)

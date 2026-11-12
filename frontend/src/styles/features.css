@@ -301,11 +301,53 @@
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .file-meta small { color: rgba(232,240,233,.35); font-size: .72rem; }
-.file-remove {
-  background: none; border: none; color: rgba(239,68,68,.5);
-  cursor: pointer; padding: 4px; transition: color .2s;
+.file-actions-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid rgba(0, 201, 167, 0.1);
 }
-.file-remove:hover { color: #EF4444; }
+.file-action-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+.file-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.file-replace {
+  background: rgba(0, 201, 167, 0.08);
+  border: 1px solid rgba(0, 201, 167, 0.22);
+  color: #00C9A7;
+}
+.file-replace:hover:not(:disabled) {
+  background: rgba(0, 201, 167, 0.16);
+  border-color: rgba(0, 201, 167, 0.38);
+}
+.file-remove {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.22);
+  color: #F87171;
+  cursor: pointer;
+  padding: 6px 10px;
+  transition: all 0.18s ease;
+}
+.file-remove:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.16);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #EF4444;
+}
 
 /* Playback controls */
 .file-playback {

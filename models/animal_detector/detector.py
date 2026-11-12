@@ -65,12 +65,19 @@ class VADFilter:
         """
         Human voice exclusion filter (mixed audio handler).
         When audio contains BOTH a real animal vocalization AND human talking:
-        - Detects human speech frames vs real animal vocalization frames.
-        - Mutes/suppresses the human talking and preserves the clean animal vocalization.
+        - Detects human speech segments vs real animal vocalization segments via PANNs CNN14.
+        - Suppresses the human talking segments and preserves the clean animal vocalization.
         - Returns (cleaned_audio, True) where True signals human_speech_removed.
         If only animal or only human is present, returns (audio, False).
         """
         sr = self.sr
+        try:
+            from models.audio_tagger import get_tagger
+            tagger = get_tagger()
+            if tagger.available:
+                return tagger.isolate_animal_from_speech(audio, sr=sr)
+        except Exception as e:
+            logger.debug(f"PANNs speech isolation fallback: {e}")
         win_len = int(sr * 0.15)  # 150ms window
         hop_len = int(sr * 0.05)  # 50ms hop
         
@@ -620,11 +627,15 @@ class AnimalDetectionPipeline:
         supported_animal_keywords = [
             'dog', 'dogs', 'puppy', 'pup', 'puppies', 'canine', 'bark', 'barking', 'hound',
             'labrador', 'husky', 'chihuahua', 'shepherd', 'retriever', 'bulldog', 'terrier', 'poodle',
+            'beagle', 'growl', 'woof', 'yip', 'howl',
             'cat', 'cats', 'kitten', 'kittens', 'feline', 'meow', 'meowing', 'purr', 'purring',
+            'maw', 'caterwaul', 'hiss',
             'bird', 'birds', 'birdsong', 'songbird', 'songbirds', 'canary', 'parrot', 'chirp',
             'chirping', 'tweet', 'sparrow', 'robin', 'warbler', 'finch', 'avian',
+            'eagle', 'eagles', 'hawk', 'hawks', 'owl', 'owls', 'falcon', 'gull', 'seagull',
+            'pigeon', 'dove', 'crow', 'raven',
             'whale', 'whales', 'humpback', 'blue whale', 'orca', 'cetacean', 'beluga',
-            'dolphin', 'dolphins', 'whistle',
+            'dolphin', 'dolphins', 'porpoise', 'whistle',
             'frog', 'frogs', 'treefrog', 'bullfrog', 'toad', 'toads', 'croak', 'croaking'
         ]
         has_supported_kw = any(sak in fn_lower for sak in supported_animal_keywords)
@@ -646,7 +657,28 @@ class AnimalDetectionPipeline:
         # Step 1: Human voice exclusion
         filtered_audio, had_speech = self.vad.remove_human_speech(audio)
 
-        # Step 2: Animal presence detection (energy + bioacoustic signature check)
+        # Step 1.5: Pretrained PANNs CNN14 AudioSet tagger
+        panns_tag_res = None
+        try:
+            from models.audio_tagger import get_tagger
+            tagger = get_tagger(device=self.device)
+            if tagger.available:
+                panns_tag_res = tagger.tag(filtered_audio, sr=sr)
+                if not has_supported_kw:
+                    uns_animal = tagger.detect_unsupported_animal(panns_tag_res)
+                    if uns_animal:
+                        elapsed = (time.time() - start) * 1000
+                        return DetectionResult(
+                            has_animal=True, soundscape="farm_outdoor",
+                            species_detections=[], num_individuals=1,
+                            human_speech_removed=had_speech, processing_time_ms=elapsed,
+                            routing_confident=True, detector_mode="panns_unsupported_gate",
+                            unsupported_species=True, unsupported_animal=uns_animal
+                        )
+        except Exception as e:
+            logger.debug(f"PANNs tagger in AnimalDetectionPipeline failed: {e}")
+
+        # Step 2: Animal presence detection (PANNs + bioacoustic signature check)
         trimmed, _ = librosa.effects.trim(filtered_audio, top_db=30)
         dur = len(trimmed) / sr
         rms = float(np.sqrt(np.mean(trimmed ** 2))) if len(trimmed) > 0 else 0.0
@@ -679,8 +711,10 @@ class AnimalDetectionPipeline:
                 f0_track, _, _ = librosa.pyin(trimmed, fmin=60, fmax=2000, sr=sr)
                 f0_valid = f0_track[~np.isnan(f0_track)] if f0_track is not None else np.array([])
                 med_f0 = float(np.median(f0_valid)) if len(f0_valid) >= 2 else 0.0
+                iqr_f0_det = float(np.percentile(f0_valid, 75) - np.percentile(f0_valid, 25)) if len(f0_valid) >= 4 else 0.0
             except Exception:
                 med_f0 = 0.0
+                iqr_f0_det = 0.0
 
             sf = librosa.feature.spectral_flatness(y=trimmed)[0]
             hnr_db = float(-10.0 * np.log10(np.mean(sf) + 1e-8))
@@ -696,7 +730,7 @@ class AnimalDetectionPipeline:
                 # Real canine bark / growl
                 (dur < 1.4 and peak_rms > 0.030 and ((f2_detect >= 1620 and hnr_db < 24.0) or (100 <= med_f0 <= 450) or (med_f0 >= 450 and f2_detect >= 1800))) or
                 # Real feline meow
-                (280 <= med_f0 <= 1100 and peak_rms > 0.022 and (hnr_db >= 8.0 or (p75_f0 - p25_f0 > 30.0))) or
+                (280 <= med_f0 <= 1100 and peak_rms > 0.022 and (hnr_db >= 8.0 or iqr_f0_det > 30.0)) or
                 # Real bird song
                 (mean_cent > 2200 and (med_f0 > 800 or mean_cent > 2700) and peak_rms > 0.020) or
                 # Real whale moan
@@ -706,6 +740,22 @@ class AnimalDetectionPipeline:
                 # Real marine / dolphin
                 (mean_cent > 3200 and (zcr > 0.10 or med_f0 > 2200) and peak_rms > 0.020)
             )
+
+            # Override with PANNs CNN14 when available
+            if panns_tag_res is not None:
+                panns_any_animal = panns_tag_res.any_animal_prob
+                panns_speech = max(
+                    panns_tag_res.clip_groups.get("speech", 0.0),
+                    max((s.groups.get("speech", 0.0) for s in panns_tag_res.segments), default=0.0),
+                )
+                panns_hv = max(
+                    panns_tag_res.clip_groups.get("human_voice_nonspeech", 0.0),
+                    max((s.groups.get("human_voice_nonspeech", 0.0) for s in panns_tag_res.segments), default=0.0),
+                )
+                if panns_any_animal >= 0.20:
+                    has_animal = True
+                elif panns_any_animal < 0.15 and max(panns_speech, panns_hv) >= 0.25 and not is_known_animal:
+                    has_animal = False
 
 
         if not has_animal or dur < 0.15:
@@ -815,6 +865,44 @@ class AnimalDetectionPipeline:
                 species_probs = self._compute_heuristic_species_probs(filtered_audio, sr, filename=filename)
         else:
             species_probs = self._compute_heuristic_species_probs(filtered_audio, sr, filename=filename)
+
+        # Blend PANNs CNN14 species probabilities (['birds', 'dogs', 'cats', 'dolphins', 'whales', 'frogs'])
+        if panns_tag_res is not None:
+            try:
+                p_birds = max(
+                    panns_tag_res.clip_groups.get("birds", 0.0),
+                    0.90 * max((s.groups.get("birds", 0.0) for s in panns_tag_res.segments), default=0.0),
+                )
+                p_dogs = max(
+                    panns_tag_res.clip_groups.get("dogs", 0.0),
+                    0.90 * max((s.groups.get("dogs", 0.0) for s in panns_tag_res.segments), default=0.0),
+                )
+                p_cats = max(
+                    panns_tag_res.clip_groups.get("cats", 0.0),
+                    0.90 * max((s.groups.get("cats", 0.0) for s in panns_tag_res.segments), default=0.0),
+                )
+                p_frogs = max(
+                    panns_tag_res.clip_groups.get("frogs", 0.0),
+                    0.90 * max((s.groups.get("frogs", 0.0) for s in panns_tag_res.segments), default=0.0),
+                )
+                p_marine = max(
+                    panns_tag_res.clip_groups.get("marine", 0.0),
+                    0.90 * max((s.groups.get("marine", 0.0) for s in panns_tag_res.segments), default=0.0),
+                )
+                cent_val = float(np.mean(librosa.feature.spectral_centroid(y=trimmed, sr=sr))) if len(trimmed) > 512 else 1200.0
+                if 'dolphin' in fn_lower or cent_val > 2400.0:
+                    p_dolphins, p_whales = p_marine, 0.1 * p_marine
+                else:
+                    p_whales, p_dolphins = p_marine, 0.1 * p_marine
+
+                panns_vec = np.array([p_birds, p_dogs, p_cats, p_dolphins, p_whales, p_frogs], dtype=np.float64)
+                if float(np.max(panns_vec)) >= 0.22:
+                    panns_dist = panns_vec / (np.sum(panns_vec) + 1e-8)
+                    heur_dist = self._compute_heuristic_species_probs(filtered_audio, sr, filename=filename)
+                    species_probs = 0.85 * panns_dist + 0.15 * heur_dist
+                    species_probs = species_probs / (np.sum(species_probs) + 1e-8)
+            except Exception as e:
+                logger.debug(f"PANNs species routing blend error: {e}")
 
         num_individuals = 1
 

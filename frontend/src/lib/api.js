@@ -1,7 +1,26 @@
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL || ''
 const API_BASE_URL = configuredBaseUrl.replace(/\/$/, '')
 
-function endpoint(path) {
+let runtimeAuthToken = null
+
+export function setApiAuthToken(token) {
+  runtimeAuthToken = token || null
+}
+
+function getAuthToken() {
+  if (runtimeAuthToken) return runtimeAuthToken
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.localStorage.getItem('animalvox-frontend')
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    return parsed?.state?.authToken || null
+  } catch {
+    return null
+  }
+}
+
+export function endpoint(path) {
   return `${API_BASE_URL}${path}`
 }
 
@@ -40,11 +59,18 @@ export function sanitizeUserErrorMessage(err) {
 }
 
 async function request(path, options = {}) {
+  const token = getAuthToken()
+  const headers = { ...(options.headers || {}) }
+  if (token && !headers.Authorization && !headers.authorization) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
   let response
   try {
     response = await fetch(endpoint(path), {
       credentials: 'include',
       ...options,
+      headers,
     })
   } catch {
     throw new Error('Bioacoustic telemetry signal could not connect. Please ensure backend service is active.')
@@ -89,3 +115,27 @@ export const getHealthWeekly = (petId) => request(`/api/v1/health/weekly/${encod
 export const getEmotionWeekly = (petId) => request(`/api/v1/emotion/weekly/${encodeURIComponent(petId)}`)
 export const getWellbeing = (petId) => request(`/api/v1/wellbeing/${encodeURIComponent(petId)}`)
 export const getSupportedSpecies = () => request('/api/v1/species')
+
+export const getUserStateApi = () => request('/api/v1/user/state')
+export const syncUserStateApi = (payload) =>
+  request('/api/v1/user/sync', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+export const savePetApi = (pet) =>
+  request('/api/v1/pets', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(pet),
+  })
+export const deletePetApi = (petId) =>
+  request(`/api/v1/pets/${encodeURIComponent(petId)}`, { method: 'DELETE' })
+export const saveTranslationApi = (entry) =>
+  request('/api/v1/translations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(entry),
+  })
+export const logoutApi = () =>
+  request('/api/v1/auth/logout', { method: 'POST' }).catch(() => ({}))
