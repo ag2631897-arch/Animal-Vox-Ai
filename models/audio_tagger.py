@@ -210,18 +210,23 @@ class AudioTagger:
     def __init__(self, device: str = "cpu"):
         self.device = device
         self.available = False
+        self.model = None
         self.labels: List[str] = []
         self.name_to_idx: Dict[str, int] = {}
         self.group_idx: Dict[str, List[int]] = {}
         self.generic_idx: List[int] = []
         self.human_voice_idx: List[int] = []
         self._tag_cache: Dict[tuple, TagResult] = {}
+        if not CHECKPOINT.exists() or not LABELS_CSV.exists():
+            logger.warning(f"AudioTagger disabled: checkpoint missing at {CHECKPOINT}")
+            return
         try:
             self.labels = self._load_labels()
-            self.model = Cnn14()
+            model = Cnn14()
             ckpt = torch.load(CHECKPOINT, map_location=device, weights_only=False)
-            self.model.load_state_dict(ckpt["model"], strict=True)
-            self.model.to(device).eval()
+            model.load_state_dict(ckpt["model"], strict=True)
+            model.to(device).eval()
+            self.model = model
             self.name_to_idx = {n: i for i, n in enumerate(self.labels)}
             for g, names in GROUPS.items():
                 idx = [self.name_to_idx[n] for n in names if n in self.name_to_idx]
@@ -231,6 +236,7 @@ class AudioTagger:
             self.available = True
             logger.info("AudioTagger: ✅ PANNs CNN14 (16 kHz, AudioSet mAP 0.438) loaded")
         except Exception as e:
+            self.model = None
             logger.warning(f"AudioTagger unavailable ({e}). "
                            f"Expected checkpoint at {CHECKPOINT}")
 
