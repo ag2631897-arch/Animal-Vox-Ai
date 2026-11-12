@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 JWT_SECRET = os.getenv("JWT_SECRET", "animalvox_jwt_secret_key_prod_2026_secured_neondb")
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRATION_SECONDS = 60 * 60 * 24 * 7  # 7 days
+JWT_EXPIRATION_SECONDS = 60 * 60 * 24 * 30  # 30 days
 
 def hash_password(password: str) -> str:
     """Hash password using bcrypt."""
@@ -48,7 +48,12 @@ def create_access_token(user_data: Dict[str, Any]) -> str:
 def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
     """Decode and validate a JWT session token."""
     try:
-        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return jwt.decode(
+            token,
+            JWT_SECRET,
+            algorithms=[JWT_ALGORITHM],
+            leeway=60 * 60 * 24 * 30,
+        )
     except Exception as e:
         logger.debug(f"JWT decode error: {e}")
         return None

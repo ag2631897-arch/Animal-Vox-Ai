@@ -20,14 +20,21 @@ function formatDimension(dimension) {
 }
 
 export default function HealthDashboard() {
-  const petId = useAppStore((state) => state.activePetId)
-  const pet = useAppStore((state) => state.pets.find((item) => item.id === petId))
+  const pet = useAppStore((state) => state.pets.find((item) => item.id === state.activePetId) || state.pets[0])
+  const petId = pet?.id || ''
   const [loading, setLoading] = useState(true)
   const [wellbeing, setWellbeing] = useState(null)
   const [health, setHealth] = useState(null)
   const [message, setMessage] = useState('')
 
   useEffect(() => {
+    if (!petId) {
+      setWellbeing(null)
+      setHealth(null)
+      setMessage('Create or select a pet profile to start tracking health signals.')
+      setLoading(false)
+      return
+    }
     let active = true
     setLoading(true)
     setMessage('')

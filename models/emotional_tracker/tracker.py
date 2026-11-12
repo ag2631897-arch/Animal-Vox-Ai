@@ -168,25 +168,46 @@ class EmotionalDiary:
         conn.close()
 
     def get_entries(self, pet_id: str, days: int = 7) -> List[Dict]:
-        """Get recent diary entries for a pet."""
+        """Get recent diary entries for a pet, falling back to full history if no entries in window."""
         since = (datetime.utcnow() - timedelta(days=days)).isoformat()
         conn = sqlite3.connect(str(self.db_path))
         cursor = conn.execute(
             """SELECT timestamp, primary_emotion, primary_confidence,
-                      all_emotions, stress_level
+                      all_emotions, stress_level, prosodic_snapshot, species
                FROM emotion_entries
                WHERE pet_id = ? AND timestamp >= ?
                ORDER BY timestamp DESC""",
             (pet_id, since)
         )
+        rows = cursor.fetchall()
+        if not rows:
+            cursor = conn.execute(
+                """SELECT timestamp, primary_emotion, primary_confidence,
+                          all_emotions, stress_level, prosodic_snapshot, species
+                   FROM emotion_entries
+                   WHERE pet_id = ?
+                   ORDER BY timestamp DESC
+                   LIMIT 100""",
+                (pet_id,)
+            )
+            rows = cursor.fetchall()
         entries = []
-        for row in cursor.fetchall():
+        for row in rows:
+            stress_val = float(row[4]) if isinstance(row[4], (int, float)) else 0.0
+            prosodic_snap = {}
+            if len(row) > 5 and row[5]:
+                try:
+                    prosodic_snap = json.loads(row[5])
+                except Exception:
+                    prosodic_snap = {}
             entries.append({
                 "timestamp": row[0],
                 "primary_emotion": row[1],
-                "confidence": row[2],
-                "all_emotions": json.loads(row[3]),
-                "stress_level": row[4],
+                "confidence": float(row[2]) if isinstance(row[2], (int, float)) else 0.0,
+                "all_emotions": json.loads(row[3]) if row[3] else [],
+                "stress_level": stress_val,
+                "prosodic_snapshot": prosodic_snap,
+                "species": row[6] if len(row) > 6 else "",
             })
         conn.close()
         return entries

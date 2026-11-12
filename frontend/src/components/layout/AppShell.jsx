@@ -44,6 +44,8 @@ export default function AppShell({ children }) {
   const authUser = useAppStore((s) => s.authUser)
   const pets = useAppStore((s) => s.pets)
   const mustCompletePetProfile = useAppStore((s) => s.mustCompletePetProfile)
+  const hasCompletedOnboarding = useAppStore((s) => s.hasCompletedOnboarding)
+  const syncWithServer = useAppStore((s) => s.syncWithServer)
   const [accountOpen, setAccountOpen] = useState(false)
   const screen = pathToScreen[location.pathname] || 'record'
 
@@ -51,6 +53,12 @@ export default function AppShell({ children }) {
     setActiveScreen(screen)
     document.title = `${titles[screen]} · AnimalVox`
   }, [screen, setActiveScreen])
+
+  useEffect(() => {
+    if (authUser) {
+      syncWithServer()
+    }
+  }, [authUser?.id, authUser?.email, syncWithServer])
 
   const handleLogout = () => {
     logout()
@@ -71,7 +79,9 @@ export default function AppShell({ children }) {
 
   // When someone logs in with Google for the first time (or is a new user with 0 pets):
   // Show ONLY the pet profile making page first, without sidebar or surrounding tabs.
-  const isFirstTimeProfileRequired = Boolean(mustCompletePetProfile || (authUser?.provider === 'google' && pets.length === 0))
+  const isFirstTimeProfileRequired = Boolean(
+    pets.length === 0 && (mustCompletePetProfile || (authUser?.provider === 'google' && !hasCompletedOnboarding))
+  )
 
   if (isFirstTimeProfileRequired) {
     return (

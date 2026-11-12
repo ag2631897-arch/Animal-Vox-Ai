@@ -16,12 +16,17 @@ function EmotionSkeleton() {
 }
 
 export default function EmotionTimeline() {
-  const petId = useAppStore((state) => state.activePetId)
-  const pet = useAppStore((state) => state.pets.find((item) => item.id === petId))
+  const pet = useAppStore((state) => state.pets.find((item) => item.id === state.activePetId) || state.pets[0])
+  const petId = pet?.id || ''
   const [loading, setLoading] = useState(true)
   const [digest, setDigest] = useState(null)
 
   useEffect(() => {
+    if (!petId) {
+      setDigest(null)
+      setLoading(false)
+      return
+    }
     let active = true
     setLoading(true)
     getEmotionWeekly(petId).then((result) => { if (active) setDigest(result) }).catch(() => { if (active) setDigest(null) }).finally(() => { if (active) setLoading(false) })

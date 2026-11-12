@@ -22,16 +22,21 @@ from typing import Optional, Dict, Any
 
 from fastapi import FastAPI, UploadFile, File, Form, Query, HTTPException, Header, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from pydantic import BaseModel
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from database.connection import init_db
+from database.connection import init_db, get_connection
 from database.auth import (
     register_user, login_user, authenticate_google_user,
     decode_access_token, get_user_by_id
+)
+from database.user_data import (
+    verify_pet_ownership, save_user_pet, delete_user_pet,
+    save_user_translation, get_user_state, sync_user_state,
+    sync_pet_telemetry_to_db, restore_pet_telemetry_from_db,
 )
 
 import numpy as np
@@ -142,14 +147,75 @@ async def root():
     }
 
 
+def _get_optional_user_id(request: Request, authorization: Optional[str] = None) -> Optional[int]:
+    """Extract authenticated user_id from Authorization Bearer header or access_token cookie."""
+    token = None
+    auth_header = authorization or request.headers.get("authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+    elif request.cookies.get("access_token"):
+        token = request.cookies.get("access_token")
+    if not token:
+        return None
+    payload = decode_access_token(token)
+    if not payload or "sub" not in payload:
+        return None
+    try:
+        return int(payload["sub"])
+    except (ValueError, TypeError):
+        return None
+
+
+def _require_user_id(request: Request, authorization: Optional[str] = None) -> int:
+    user_id = _get_optional_user_id(request, authorization)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    return user_id
+
+
+def _enforce_pet_isolation(request: Request, pet_id: str, authorization: Optional[str] = None, auto_claim: bool = False) -> Optional[int]:
+    """
+    Ensure `pet_id` is only accessible by its owner user.
+    Blocks other users (403) and unauthenticated requests to user-owned pets (401).
+    """
+    user_id = _get_optional_user_id(request, authorization)
+    if user_id:
+        if not verify_pet_ownership(user_id, pet_id, auto_claim=auto_claim):
+            raise HTTPException(status_code=403, detail="Access denied: this pet profile belongs to another user.")
+        return user_id
+
+    # If unauthenticated, check if pet_id is registered to any user in NeonDB
+    try:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT user_id FROM pets WHERE id = %s;", (pet_id,))
+                row = cur.fetchone()
+                if row and row[0] is not None:
+                    raise HTTPException(status_code=401, detail="Authentication required to access this pet profile.")
+                cur.execute("SELECT user_id FROM pet_baselines WHERE pet_id = %s;", (pet_id,))
+                brow = cur.fetchone()
+                if brow and brow[0] is not None:
+                    raise HTTPException(status_code=401, detail="Authentication required to access this pet profile.")
+        finally:
+            conn.close()
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+    return None
+
+
 @app.post("/api/v1/translate")
 async def translate_audio(
+    request: Request,
     audio: UploadFile = File(None),
     audio_base64: str = Form(None),
     species: str = Form(None),           # None = auto-detect
     audio_format: str = Form("wav"),
     pet_id: str = Form(None),            # Optional pet profile ID
     enable_modules: Optional[Any] = Form(True),   # Enable intelligence modules
+    authorization: Optional[str] = Header(None),
 ):
     """
     Translate animal audio to human language.
@@ -180,14 +246,25 @@ async def translate_audio(
     else:
         modules_enabled = str(enable_modules).strip().lower() not in ('false', '0', 'no', 'null', 'undefined')
 
+    user_id = None
+    if pet_id:
+        user_id = await asyncio.to_thread(
+            _enforce_pet_isolation, request, pet_id, authorization=authorization, auto_claim=True
+        )
+        await asyncio.to_thread(restore_pet_telemetry_from_db, user_id, pet_id)
+    else:
+        user_id = _get_optional_user_id(request, authorization)
+
+    scoped_cache_pet = f"u{user_id}:{pet_id}" if (user_id and pet_id) else pet_id
+
     try:
         raw_bytes = None
         if audio:
             contents = await audio.read()
             raw_bytes = contents
-            cache_key = bioacoustic_cache.compute_key(raw_bytes, species, pet_id)
+            cache_key = bioacoustic_cache.compute_key(raw_bytes, species, scoped_cache_pet)
             cached_res = bioacoustic_cache.get(cache_key)
-            if cached_res:
+            if cached_res and not pet_id:
                 return sanitize_for_json(cached_res)
 
             fmt = audio.filename.rsplit(".", 1)[-1] if audio.filename else "wav"
@@ -209,9 +286,9 @@ async def translate_audio(
         elif audio_base64:
             audio_bytes = base64.b64decode(audio_base64)
             raw_bytes = audio_bytes
-            cache_key = bioacoustic_cache.compute_key(raw_bytes, species, pet_id)
+            cache_key = bioacoustic_cache.compute_key(raw_bytes, species, scoped_cache_pet)
             cached_res = bioacoustic_cache.get(cache_key)
-            if cached_res:
+            if cached_res and not pet_id:
                 return sanitize_for_json(cached_res)
 
             result = await pipeline.translate(
@@ -221,6 +298,11 @@ async def translate_audio(
         else:
             raise HTTPException(400, "Provide audio file or audio_base64")
 
+        if pet_id and not result.get("error"):
+            asyncio.get_running_loop().run_in_executor(
+                None, sync_pet_telemetry_to_db, user_id, pet_id
+            )
+
         # Remove non-serializable data and sanitize all numpy primitives
         result.pop("mel_spectrogram", None)
         sanitized = sanitize_for_json(result)
@@ -228,6 +310,8 @@ async def translate_audio(
             bioacoustic_cache.set(cache_key, sanitized)
         return sanitized
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Translation error: {e}", exc_info=True)
         raise HTTPException(500, f"Translation error: {str(e)}")
@@ -310,8 +394,15 @@ async def list_species():
 
 
 @app.get("/api/v1/health/weekly/{pet_id}")
-async def get_health_weekly(pet_id: str):
-    """Get weekly health digest for a pet."""
+def get_health_weekly(
+    pet_id: str,
+    request: Request,
+    authorization: Optional[str] = Header(None),
+):
+    """Get weekly health digest for a pet (scoped to the pet's owner)."""
+    user_id = _enforce_pet_isolation(request, pet_id, authorization=authorization, auto_claim=True)
+    restore_pet_telemetry_from_db(user_id, pet_id)
+
     pipeline.load_modules()
     baseline = pipeline.health_monitor.baseline_mgr.get_baseline(pet_id)
     if not baseline:
@@ -331,8 +422,15 @@ async def get_health_weekly(pet_id: str):
 
 
 @app.get("/api/v1/emotion/weekly/{pet_id}")
-async def get_emotion_weekly(pet_id: str):
-    """Get weekly emotional digest for a pet."""
+def get_emotion_weekly(
+    pet_id: str,
+    request: Request,
+    authorization: Optional[str] = Header(None),
+):
+    """Get weekly emotional digest for a pet (scoped to the pet's owner)."""
+    user_id = _enforce_pet_isolation(request, pet_id, authorization=authorization, auto_claim=True)
+    restore_pet_telemetry_from_db(user_id, pet_id)
+
     pipeline.load_modules()
     digest = pipeline.emotional_tracker.get_weekly_digest(pet_id)
     if not digest:
@@ -353,14 +451,28 @@ async def get_emotion_weekly(pet_id: str):
 
 
 @app.get("/api/v1/wellbeing/{pet_id}")
-async def get_wellbeing(pet_id: str):
-    """Get current wellbeing score and history for a pet."""
+def get_wellbeing(
+    pet_id: str,
+    request: Request,
+    authorization: Optional[str] = Header(None),
+):
+    """Get current wellbeing score and history for a pet (scoped to the pet's owner)."""
+    user_id = _enforce_pet_isolation(request, pet_id, authorization=authorization, auto_claim=True)
+    restore_pet_telemetry_from_db(user_id, pet_id)
+
     pipeline.load_modules()
     diary_entries = pipeline.emotional_tracker.diary.get_entries(pet_id, days=7)
-    if not diary_entries:
+    baseline = pipeline.health_monitor.baseline_mgr.get_baseline(pet_id)
+    if not diary_entries and not baseline:
         raise HTTPException(404, f"No wellbeing data found for pet: {pet_id}")
 
-    report = pipeline.wellbeing.assess(pet_id=pet_id, diary_entries=diary_entries)
+    prosodic_means = (baseline or {}).get("means", {})
+    report = pipeline.wellbeing.assess(
+        pet_id=pet_id,
+        prosodic_features=prosodic_means,
+        diary_entries=diary_entries,
+        save_to_history=False,
+    )
     trend, delta = pipeline.wellbeing.history.get_trend(pet_id)
     return {
         "pet_id": pet_id,
@@ -379,6 +491,68 @@ async def get_wellbeing(pet_id: str):
         },
         "recommendations": report.recommendations,
     }
+
+
+# ── Per-User State & Profile Persistence Endpoints (NeonDB) ──
+@app.get("/api/v1/user/state")
+def api_get_user_state(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+):
+    """Fetch authenticated user's pets, translation history, and settings from NeonDB."""
+    user_id = _require_user_id(request, authorization)
+    state = get_user_state(user_id)
+    return {"success": True, **sanitize_for_json(state)}
+
+
+@app.post("/api/v1/user/sync")
+def api_sync_user_state(
+    payload: Dict[str, Any],
+    request: Request,
+    authorization: Optional[str] = Header(None),
+):
+    """Synchronize authenticated user's pets, translation history, and settings with NeonDB."""
+    user_id = _require_user_id(request, authorization)
+    state = sync_user_state(user_id, payload)
+    return {"success": True, **sanitize_for_json(state)}
+
+
+@app.post("/api/v1/pets")
+def api_save_pet(
+    pet: Dict[str, Any],
+    request: Request,
+    authorization: Optional[str] = Header(None),
+):
+    """Save or update a pet profile owned by the authenticated user."""
+    user_id = _require_user_id(request, authorization)
+    saved = save_user_pet(user_id, pet)
+    if not saved:
+        raise HTTPException(status_code=403, detail="Could not save pet profile.")
+    return {"success": True, "pet": sanitize_for_json(saved)}
+
+
+@app.delete("/api/v1/pets/{pet_id}")
+def api_delete_pet(
+    pet_id: str,
+    request: Request,
+    authorization: Optional[str] = Header(None),
+):
+    """Delete a pet profile owned by the authenticated user."""
+    user_id = _require_user_id(request, authorization)
+    deleted = delete_user_pet(user_id, pet_id)
+    return {"success": True, "deleted": deleted}
+
+
+@app.post("/api/v1/translations")
+def api_save_translation(
+    entry: Dict[str, Any],
+    request: Request,
+    authorization: Optional[str] = Header(None),
+):
+    """Save a translation history entry for the authenticated user."""
+    user_id = _require_user_id(request, authorization)
+    saved = save_user_translation(user_id, entry)
+    return {"success": True, "entry": sanitize_for_json(saved)}
 
 
 # ── Authentication Endpoints (NeonDB PostgreSQL + Google OAuth) ──
@@ -473,7 +647,7 @@ def _set_auth_cookie(response: Response, token: str):
     )
 
 @app.post("/api/v1/auth/signup")
-async def api_signup(req: SignupRequest, response: Response):
+def api_signup(req: SignupRequest, response: Response):
     """Register a new user account with NeonDB PostgreSQL and set auth cookie."""
     res = register_user(req.name, req.email, req.password)
     if not res.get("success"):
@@ -483,7 +657,7 @@ async def api_signup(req: SignupRequest, response: Response):
     return res
 
 @app.post("/api/v1/auth/login")
-async def api_login(req: LoginRequest, response: Response):
+def api_login(req: LoginRequest, response: Response):
     """Log in with email and password verified against NeonDB PostgreSQL."""
     res = login_user(req.email, req.password)
     if not res.get("success"):
@@ -493,7 +667,7 @@ async def api_login(req: LoginRequest, response: Response):
     return res
 
 @app.post("/api/v1/auth/google")
-async def api_google_auth(req: GoogleAuthRequest, response: Response):
+def api_google_auth(req: GoogleAuthRequest, response: Response):
     """Log in or sign up with Google OAuth, returning is_new_user and setting auth cookie."""
     res = authenticate_google_user(
         credential=req.credential,
@@ -509,13 +683,13 @@ async def api_google_auth(req: GoogleAuthRequest, response: Response):
     return res
 
 @app.post("/api/v1/auth/logout")
-async def api_logout(response: Response):
+def api_logout(response: Response):
     """Log out and revoke authentication cookie."""
     response.delete_cookie(key="access_token", path="/")
     return {"success": True, "message": "Logged out successfully"}
 
 @app.get("/api/v1/auth/me")
-async def api_get_me(request: Request, authorization: Optional[str] = Header(None)):
+def api_get_me(request: Request, authorization: Optional[str] = Header(None)):
     """Retrieve currently authenticated user profile from NeonDB via header or HTTP cookie."""
     token = None
     if authorization and authorization.startswith("Bearer "):

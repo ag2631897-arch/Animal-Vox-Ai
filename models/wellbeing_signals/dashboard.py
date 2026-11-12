@@ -86,16 +86,18 @@ class WellbeingScorer:
             score += 20
 
         # Abnormal RMS (very low = lethargy, very high = distress)
-        rms = prosodic.get("mean_rms", 0.0)
-        if rms < 0.01:  # Very quiet — possible lethargy
-            score += 10
-        elif rms > 0.5:  # Very loud — possible distress
-            score += 10
+        if prosodic and "mean_rms" in prosodic:
+            rms = prosodic.get("mean_rms", 0.1)
+            if rms < 0.01:  # Very quiet — possible lethargy
+                score += 10
+            elif rms > 0.5:  # Very loud — possible distress
+                score += 10
 
         return min(score, 100.0)
 
     def compute_environmental_stress(self, emotion_report,
-                                     soundscape: str = "") -> float:
+                                     soundscape: str = "",
+                                     diary_entries: List = None) -> float:
         """
         Compute environmental stress score (0-100, lower = better).
         
@@ -114,6 +116,14 @@ class WellbeingScorer:
             for e in emotion_report.secondary_emotions:
                 if e.state_id == "E05" and e.confidence > 0.3:
                     score += 15
+        elif diary_entries:
+            stress_vals = [float(e.get("stress_level", 0.0)) for e in diary_entries]
+            if stress_vals:
+                score += (sum(stress_vals) / len(stress_vals)) * 50
+            for entry in diary_entries[:3]:
+                for em in entry.get("all_emotions", []):
+                    if em.get("id") == "E05" and float(em.get("conf", 0.0)) > 0.3:
+                        score += 5
 
         # Soundscape adjustments
         soundscape_stress = {
@@ -143,6 +153,19 @@ class WellbeingScorer:
                     score += pred.confidence * 60
                 elif pred.state_id == "E08":  # Frustration
                     score += pred.confidence * 20
+        elif diary_entries:
+            e10_scores = []
+            e08_scores = []
+            for entry in diary_entries:
+                for em in entry.get("all_emotions", []):
+                    if em.get("id") == "E10":
+                        e10_scores.append(float(em.get("conf", 0.0)))
+                    elif em.get("id") == "E08":
+                        e08_scores.append(float(em.get("conf", 0.0)))
+            if e10_scores:
+                score += (sum(e10_scores) / len(e10_scores)) * 60
+            if e08_scores:
+                score += (sum(e08_scores) / len(e08_scores)) * 20
 
         # Diary-based isolation patterns
         if diary_entries and len(diary_entries) > 3:
@@ -166,9 +189,9 @@ class WellbeingScorer:
         - Mood stability
         """
         score = 0.0
+        positive_states = {"E01": 0.4, "E06": 0.25, "E07": 0.20, "E09": 0.15}
 
         if emotion_report:
-            positive_states = {"E01": 0.4, "E06": 0.25, "E07": 0.20, "E09": 0.15}
             for pred in [emotion_report.primary_emotion] + emotion_report.secondary_emotions:
                 if pred.state_id in positive_states:
                     weight = positive_states[pred.state_id]
@@ -176,9 +199,31 @@ class WellbeingScorer:
 
             # Mood stability bonus
             score += emotion_report.mood_stability * 20
+        elif diary_entries:
+            entry_pos_scores = []
+            for entry in diary_entries:
+                pos_sum = 0.0
+                for em in entry.get("all_emotions", []):
+                    sid = em.get("id")
+                    if sid in positive_states:
+                        pos_sum += float(em.get("conf", 0.0)) * positive_states[sid] * 100
+                entry_pos_scores.append(pos_sum)
+            if entry_pos_scores:
+                score += sum(entry_pos_scores) / len(entry_pos_scores)
+
+            # Mood stability from diary entries
+            if len(diary_entries) > 1:
+                switches = sum(
+                    1 for i in range(1, len(diary_entries))
+                    if diary_entries[i].get("primary_emotion") != diary_entries[i - 1].get("primary_emotion")
+                )
+                stability = 1.0 - (switches / (len(diary_entries) - 1))
+            else:
+                stability = 1.0
+            score += stability * 20
 
         # Diary-based contentment trending
-        if diary_entries and len(diary_entries) > 3:
+        if diary_entries and len(diary_entries) >= 1:
             content_count = sum(
                 1 for e in diary_entries
                 if e.get("primary_emotion") in ("E01", "E06", "E07")
@@ -297,7 +342,8 @@ class WellbeingDashboard:
     def assess(self, health_report=None, emotion_report=None,
                prosodic_features: Dict = None, soundscape: str = "",
                diary_entries: List = None,
-               pet_id: Optional[str] = None) -> WellbeingReport:
+               pet_id: Optional[str] = None,
+               save_to_history: bool = True) -> WellbeingReport:
         """
         Generate comprehensive wellbeing report.
         
@@ -308,11 +354,17 @@ class WellbeingDashboard:
             soundscape: Detected soundscape category
             diary_entries: Recent diary entries for the pet
             pet_id: Optional pet ID for trend tracking
+            save_to_history: Whether to persist a new snapshot to wellbeing history
             
         Returns:
             WellbeingReport with composite score and dimension breakdowns
         """
         prosodic = prosodic_features or {}
+        if not prosodic and diary_entries:
+            for entry in diary_entries:
+                if entry.get("prosodic_snapshot"):
+                    prosodic = entry["prosodic_snapshot"]
+                    break
         health_alerts = health_report.alerts if health_report else []
         resp_normal = health_report.respiratory_normal if health_report else True
 
@@ -321,7 +373,7 @@ class WellbeingDashboard:
             health_alerts, resp_normal, prosodic
         )
         env = self.scorer.compute_environmental_stress(
-            emotion_report, soundscape
+            emotion_report, soundscape, diary_entries
         )
         iso = self.scorer.compute_isolation_stress(
             emotion_report, diary_entries
@@ -403,7 +455,7 @@ class WellbeingDashboard:
         )
 
         # Save to history
-        if pet_id:
+        if pet_id and save_to_history:
             self.history.save_snapshot(pet_id, report)
 
         return report

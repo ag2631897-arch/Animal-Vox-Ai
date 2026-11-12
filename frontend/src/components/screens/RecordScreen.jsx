@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { AudioLines, Check, Clock3, Mic, Pause, Play, RefreshCw, Save, Share2, Square, Volume2 } from 'lucide-react'
+import { AudioLines, Check, Clock3, Mic, RefreshCw, Save, Share2, Square, Volume2 } from 'lucide-react'
 import GlassCard from '../ui/GlassCard'
 import { Shimmer } from '../ui/SkeletonCard'
 import SonarRings from '../ui/SonarRings'
@@ -11,11 +11,17 @@ import AudioDropZone from '../ui/AudioDropZone'
 import AutoSpeciesToggle from '../ui/AutoSpeciesToggle'
 import { SpeciesMark } from '../ui/SpeciesMark'
 import { useAudioRecorder } from '../../hooks/useAudioRecorder'
-import { useAppStore } from '../../store/useAppStore'
+import { useAppStore, getUserStorageKey } from '../../store/useAppStore'
 import { createSpeechUtterance } from '../../hooks/speech'
 import { resolveSpecies, translateAudio } from '../../lib/api'
 import { preAnalyzeAudio, classifyDetectionResult } from '../../hooks/useAudioAnalyzer'
 import { readableSignal, readableSpecies } from '../../lib/labels'
+import {
+  getCachedSessionAudio,
+  loadSessionAudio,
+  saveSessionAudio,
+  clearSessionAudio,
+} from '../../lib/audioStorage'
 
 function formatTime(seconds) {
   return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
@@ -24,26 +30,43 @@ function formatTime(seconds) {
 function displayBehavior(result) { return readableSignal(result?.vocalization_type || result?.behaviors?.[0]?.name) }
 
 export default function RecordScreen() {
-  const activePet = useAppStore((s) => s.pets.find((p) => p.id === s.activePetId))
+  const authUser = useAppStore((s) => s.authUser)
+  const userKey = getUserStorageKey(authUser) || 'guest'
+
+  const activePet = useAppStore((s) => s.pets.find((p) => p.id === s.activePetId) || s.pets[0])
   const pets = useAppStore((s) => s.pets)
+  const recordSession = useAppStore((s) => s.recordSession)
+  const setRecordSession = useAppStore((s) => s.setRecordSession)
+  const clearRecordSession = useAppStore((s) => s.clearRecordSession)
   const addTranslation = useAppStore((s) => s.addTranslation)
   const voice = useAppStore((s) => s.voice)
   const speed = useAppStore((s) => s.speed)
   const autoDetect = useAppStore((s) => s.autoSpeciesDetection)
   const toggleAutoDetect = useAppStore((s) => s.toggleAutoSpeciesDetection)
 
-  const [analysis, setAnalysis] = useState(null)
-  const [saved, setSaved] = useState(false)
+  const cachedAudio = getCachedSessionAudio(userKey, 'record')
+  const initialAnalysis = recordSession?.analysis || null
+  const initialWordsCount = initialAnalysis?.translation
+    ? initialAnalysis.translation.split(/\s+/).length
+    : 0
+
+  const [analysis, setAnalysis] = useState(() => initialAnalysis)
+  const [saved, setSaved] = useState(() => Boolean(recordSession?.saved))
   const [speaking, setSpeaking] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [detectionType, setDetectionType] = useState(null)
   const [detectedAnimal, setDetectedAnimal] = useState('')
-  const [uploadedFileName, setUploadedFileName] = useState('')
-  const [visibleWords, setVisibleWords] = useState(0)
-  const [typewriterDone, setTypewriterDone] = useState(false)
+  const [uploadedFileName, setUploadedFileName] = useState(
+    () => recordSession?.uploadedFileName || cachedAudio?.fileName || ''
+  )
+  const [uploadedFileSize, setUploadedFileSize] = useState(
+    () => recordSession?.fileSize || cachedAudio?.fileSize || 0
+  )
+  const [visibleWords, setVisibleWords] = useState(() => initialWordsCount)
+  const [typewriterDone, setTypewriterDone] = useState(() => Boolean(initialAnalysis?.translation))
   const audioRef = useRef(null)
   const twTimerRef = useRef(null)
-  const hasAutoSpokenRef = useRef(false)
+  const hasAutoSpokenRef = useRef(Boolean(initialAnalysis?.translation))
 
   const analyzeRecording = useCallback(async ({ blob, fileName }) => {
     setDetectionType(null)
@@ -52,10 +75,23 @@ export default function RecordScreen() {
     setVisibleWords(0)
     setTypewriterDone(false)
     hasAutoSpokenRef.current = false
-    setUploadedFileName(fileName || '')
+    const resolvedName = fileName || 'Recording'
+    setUploadedFileName(resolvedName)
+    setUploadedFileSize(blob?.size || 0)
+
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current = null
+    }
+
+    await saveSessionAudio(userKey, 'record', {
+      blob,
+      fileName: resolvedName,
+      fileSize: blob?.size || 0,
+    })
 
     // Client-side pre-check
-    const preCheck = await preAnalyzeAudio(blob, fileName)
+    const preCheck = await preAnalyzeAudio(blob, resolvedName)
     if (preCheck.type === 'no_animal' || preCheck.type === 'music_detected') {
       setDetectionType(preCheck.type)
       throw new Error(preCheck.reason || 'No animal vocalizations detected in this audio.')
@@ -65,7 +101,7 @@ export default function RecordScreen() {
     try {
       result = await translateAudio({
         audio: blob,
-        fileName,
+        fileName: resolvedName,
         species: autoDetect ? '' : resolveSpecies(activePet),
         petId: activePet?.id,
       })
@@ -87,7 +123,7 @@ export default function RecordScreen() {
     if (autoDetect && result.species && pets.length > 0) {
       const detected = (result.species || '').toLowerCase()
       const match = pets.find((p) => {
-        const s = p.species.toLowerCase()
+        const s = (p.species || '').toLowerCase()
         return detected.includes(s) || s.includes(detected)
       })
       if (match) matchedPet = match
@@ -95,6 +131,16 @@ export default function RecordScreen() {
 
     setAnalysis(result)
     setSaved(false)
+    setRecordSession({
+      analysis: result,
+      uploadedFileName: resolvedName,
+      fileSize: blob?.size || 0,
+      saved: false,
+      petId: matchedPet?.id || '',
+      hasAudio: true,
+      updatedAt: Date.now(),
+    })
+
     addTranslation({
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       createdAt: new Date().toISOString(),
@@ -106,12 +152,45 @@ export default function RecordScreen() {
       confidence: result.behaviors?.[0]?.score ?? null,
       result,
     })
-  }, [activePet, pets, addTranslation, autoDetect])
+  }, [activePet, pets, addTranslation, autoDetect, setRecordSession, userKey])
 
-  const recorder = useAudioRecorder(analyzeRecording)
+  const recorder = useAudioRecorder(analyzeRecording, {
+    status: initialAnalysis ? 'result' : 'idle',
+    audioUrl: cachedAudio?.audioUrl || '',
+  })
+
+  // Restore persisted session & IndexedDB audio across page refreshes and server sync
+  useEffect(() => {
+    let active = true
+    if (recordSession?.analysis && !analysis) {
+      const words = recordSession.analysis.translation?.split(/\s+/) || []
+      setAnalysis(recordSession.analysis)
+      setSaved(Boolean(recordSession.saved))
+      setUploadedFileName(recordSession.uploadedFileName || '')
+      setUploadedFileSize(recordSession.fileSize || 0)
+      setVisibleWords(words.length)
+      setTypewriterDone(true)
+      hasAutoSpokenRef.current = true
+      recorder.setStatus('result')
+    }
+    loadSessionAudio(userKey, 'record').then((stored) => {
+      if (!active || !stored?.audioUrl) return
+      if (!recorder.audioUrl) {
+        recorder.setAudioUrl(stored.audioUrl)
+      }
+      if (!uploadedFileName && stored.fileName) {
+        setUploadedFileName(stored.fileName)
+      }
+      if (!uploadedFileSize && stored.fileSize) {
+        setUploadedFileSize(stored.fileSize)
+      }
+    })
+    return () => { active = false }
+  }, [userKey, recordSession])
+
   const isRecording = recorder.status === 'recording'
   const isProcessing = recorder.status === 'processing'
-  const isResult = recorder.status === 'result' && analysis
+  const isResult = Boolean(analysis) && !isRecording && !isProcessing
   const confidence = analysis?.behaviors?.[0]?.score || 0
 
   const detectedSpeciesNormalized = (analysis?.species || '').toLowerCase()
@@ -146,7 +225,7 @@ export default function RecordScreen() {
   }
   const translationWords = analysis?.translation?.split(/\s+/) || []
 
-  // Typewriter effect + auto-speak when result arrives
+  // Typewriter effect + auto-speak when fresh result arrives
   useEffect(() => {
     if (!isResult || !analysis?.translation) return
     if (hasAutoSpokenRef.current) return
@@ -189,7 +268,9 @@ export default function RecordScreen() {
 
   const replayOriginal = async () => {
     if (!recorder.audioUrl) return
-    if (!audioRef.current) audioRef.current = new Audio(recorder.audioUrl)
+    if (!audioRef.current || audioRef.current.src !== recorder.audioUrl) {
+      audioRef.current = new Audio(recorder.audioUrl)
+    }
     audioRef.current.currentTime = 0
     try { await audioRef.current.play() } catch { /* gesture required */ }
   }
@@ -205,7 +286,38 @@ export default function RecordScreen() {
   const chooseFile = (file) => {
     if (file) {
       setUploadedFileName(file.name)
+      setUploadedFileSize(file.size || 0)
       recorder.processFile(file)
+    }
+  }
+
+  const clearCurrentAudio = useCallback(() => {
+    window.speechSynthesis?.cancel()
+    clearInterval(twTimerRef.current)
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current = null
+    }
+    recorder.reset()
+    setAnalysis(null)
+    setSaved(false)
+    setSpeaking(false)
+    setUploadedFileName('')
+    setUploadedFileSize(0)
+    setVisibleWords(0)
+    setTypewriterDone(false)
+    setDetectionType(null)
+    setDetectedAnimal('')
+    hasAutoSpokenRef.current = false
+    clearRecordSession()
+    clearSessionAudio(userKey, 'record')
+  }, [recorder, clearRecordSession, userKey])
+
+  const toggleSave = () => {
+    const next = !saved
+    setSaved(next)
+    if (recordSession) {
+      setRecordSession({ ...recordSession, saved: next })
     }
   }
 
@@ -236,6 +348,8 @@ export default function RecordScreen() {
             disabled={isProcessing || isRecording}
             audioUrl={recorder.audioUrl}
             fileName={uploadedFileName}
+            fileSize={uploadedFileSize}
+            onClear={clearCurrentAudio}
           />
 
           {/* Auto species detection toggle */}
@@ -328,9 +442,11 @@ export default function RecordScreen() {
                       <Volume2 size={15} />
                       <span>{speaking ? 'Speaking…' : 'Replay Interpretation'}</span>
                     </button>
-                    <button className="ghost-icon" aria-label="Replay original recording" onClick={replayOriginal}>
-                      <RefreshCw size={15} />
-                    </button>
+                    {recorder.audioUrl && (
+                      <button className="ghost-icon" aria-label="Replay original recording" onClick={replayOriginal}>
+                        <RefreshCw size={15} />
+                      </button>
+                    )}
                   </motion.div>
                 )}
 
@@ -342,7 +458,7 @@ export default function RecordScreen() {
                 </div>
 
                 <div className="result-actions">
-                  <button className={`ghost-action ${saved ? 'saved' : ''}`} onClick={() => setSaved((v) => !v)}>{saved ? <Check size={15} /> : <Save size={15} />}{saved ? 'Saved' : 'Save'}</button>
+                  <button className={`ghost-action ${saved ? 'saved' : ''}`} onClick={toggleSave}>{saved ? <Check size={15} /> : <Save size={15} />}{saved ? 'Saved' : 'Save'}</button>
                   <button className="ghost-action" onClick={share}><Share2 size={15} />Share</button>
                 </div>
               </GlassCard>

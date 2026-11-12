@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { FileAudio, Pause, Play, Trash2, Upload } from 'lucide-react'
 
 function fmtSize(bytes) {
+  if (!bytes || bytes <= 0) return ''
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / 1048576).toFixed(1)} MB`
@@ -15,15 +16,24 @@ function fmtDuration(s) {
   return `${m}:${String(sec).padStart(2, '0')}`
 }
 
-export default function AudioDropZone({ onFile, disabled, audioUrl, fileName, onClear }) {
+export default function AudioDropZone({
+  onFile,
+  disabled,
+  audioUrl,
+  fileName,
+  fileSize: externalFileSize = 0,
+  onClear,
+}) {
   const [dragging, setDragging] = useState(false)
   const [playing, setPlaying] = useState(false)
   const [progress, setProgress] = useState(0)
   const [duration, setDuration] = useState(0)
-  const [fileSize, setFileSize] = useState(0)
+  const [localFileSize, setLocalFileSize] = useState(0)
   const audioElRef = useRef(null)
   const inputRef = useRef(null)
   const rafRef = useRef(null)
+
+  const displaySize = externalFileSize || localFileSize
 
   // Create / destroy the playback audio element when URL changes
   useEffect(() => {
@@ -35,7 +45,9 @@ export default function AudioDropZone({ onFile, disabled, audioUrl, fileName, on
     }
     const el = new Audio(audioUrl)
     audioElRef.current = el
-    el.addEventListener('loadedmetadata', () => setDuration(el.duration))
+    el.addEventListener('loadedmetadata', () => {
+      if (Number.isFinite(el.duration)) setDuration(el.duration)
+    })
     el.addEventListener('ended', () => { setPlaying(false); setProgress(0) })
     return () => {
       cancelAnimationFrame(rafRef.current)
@@ -64,6 +76,18 @@ export default function AudioDropZone({ onFile, disabled, audioUrl, fileName, on
     else { el.play().catch(() => {}); setPlaying(true) }
   }
 
+  const handleClear = () => {
+    if (audioElRef.current) {
+      audioElRef.current.pause()
+      audioElRef.current.currentTime = 0
+    }
+    setPlaying(false)
+    setProgress(0)
+    setDuration(0)
+    setLocalFileSize(0)
+    onClear?.()
+  }
+
   // Drag handlers
   const onDragOver = useCallback((e) => { e.preventDefault(); e.stopPropagation() }, [])
   const onDragEnter = useCallback((e) => { e.preventDefault(); setDragging(true) }, [])
@@ -73,7 +97,7 @@ export default function AudioDropZone({ onFile, disabled, audioUrl, fileName, on
     setDragging(false)
     const file = e.dataTransfer?.files?.[0]
     if (file && (file.type.startsWith('audio/') || /\.(wav|mp3|flac|ogg|webm|m4a)$/i.test(file.name))) {
-      setFileSize(file.size)
+      setLocalFileSize(file.size)
       onFile?.(file)
     }
   }, [onFile])
@@ -81,7 +105,7 @@ export default function AudioDropZone({ onFile, disabled, audioUrl, fileName, on
   const handleInputChange = (e) => {
     const file = e.target.files?.[0]
     if (file) {
-      setFileSize(file.size)
+      setLocalFileSize(file.size)
       onFile?.(file)
     }
     e.target.value = ''
@@ -110,18 +134,13 @@ export default function AudioDropZone({ onFile, disabled, audioUrl, fileName, on
                 <strong>{fileName || 'Recording'}</strong>
                 <small>
                   {duration > 0 ? fmtDuration(duration) : '—'}
-                  {fileSize > 0 && <> · {fmtSize(fileSize)}</>}
+                  {displaySize > 0 && <> · {fmtSize(displaySize)}</>}
                 </small>
               </div>
-              {onClear && (
-                <button className="file-remove" onClick={onClear} aria-label="Remove audio">
-                  <Trash2 size={14} />
-                </button>
-              )}
             </div>
 
             <div className="file-playback">
-              <button className="playback-toggle" onClick={togglePlay} aria-label={playing ? 'Pause' : 'Play'}>
+              <button type="button" className="playback-toggle" onClick={togglePlay} aria-label={playing ? 'Pause' : 'Play'}>
                 {playing ? <Pause size={14} /> : <Play size={14} fill="currentColor" />}
               </button>
               <div className="playback-track">
@@ -130,6 +149,31 @@ export default function AudioDropZone({ onFile, disabled, audioUrl, fileName, on
               <span className="playback-stamp">
                 {playing ? fmtDuration(progress * duration) : fmtDuration(duration)}
               </span>
+            </div>
+
+            <div className="file-actions-bar">
+              <button
+                type="button"
+                className="file-action-btn file-replace"
+                onClick={() => inputRef.current?.click()}
+                disabled={disabled}
+                aria-label="Upload another audio file"
+              >
+                <Upload size={13} />
+                <span>Upload another</span>
+              </button>
+              {onClear && (
+                <button
+                  type="button"
+                  className="file-action-btn file-remove"
+                  onClick={handleClear}
+                  disabled={disabled}
+                  aria-label="Remove audio clip"
+                >
+                  <Trash2 size={13} />
+                  <span>Remove</span>
+                </button>
+              )}
             </div>
           </motion.div>
         ) : (

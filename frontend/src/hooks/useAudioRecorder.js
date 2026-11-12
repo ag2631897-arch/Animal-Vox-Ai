@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { sanitizeUserErrorMessage } from '../lib/api'
 
-export function useAudioRecorder(onComplete) {
-  const [status, setStatus] = useState('idle')
-  const [seconds, setSeconds] = useState(0)
-  const [audioUrl, setAudioUrl] = useState('')
+export function useAudioRecorder(onComplete, initialState = null) {
+  const [status, setStatus] = useState(() => initialState?.status || 'idle')
+  const [seconds, setSeconds] = useState(() => initialState?.seconds || 0)
+  const [audioUrl, setAudioUrl] = useState(() => initialState?.audioUrl || '')
   const [error, setError] = useState('')
   const recorderRef = useRef(null)
   const streamRef = useRef(null)
@@ -20,7 +20,7 @@ export function useAudioRecorder(onComplete) {
 
     setStatus('processing')
     try {
-      await onComplete?.({ blob, url, fileName, durationSeconds: seconds })
+      await onComplete?.({ blob, url, fileName, durationSeconds: seconds, fileSize: blob.size })
       setStatus('result')
     } catch (err) {
       setError(sanitizeUserErrorMessage(err))
@@ -31,6 +31,26 @@ export function useAudioRecorder(onComplete) {
   const stop = useCallback(() => {
     window.clearInterval(timerRef.current)
     if (recorderRef.current?.state === 'recording') recorderRef.current.stop()
+  }, [])
+
+  const reset = useCallback(() => {
+    window.clearInterval(timerRef.current)
+    if (recorderRef.current?.state === 'recording') {
+      try { recorderRef.current.stop() } catch { /* ignore */ }
+    }
+    streamRef.current?.getTracks().forEach((track) => track.stop())
+    streamRef.current = null
+    setStatus('idle')
+    setSeconds(0)
+    setAudioUrl('')
+    setError('')
+  }, [])
+
+  const restore = useCallback(({ audioUrl: restoredUrl = '', status: restoredStatus = 'result', seconds: restoredSeconds = 0 }) => {
+    if (restoredUrl) setAudioUrl(restoredUrl)
+    if (restoredStatus) setStatus(restoredStatus)
+    if (typeof restoredSeconds === 'number') setSeconds(restoredSeconds)
+    setError('')
   }, [])
 
   const start = useCallback(async () => {
@@ -89,8 +109,7 @@ export function useAudioRecorder(onComplete) {
   useEffect(() => () => {
     window.clearInterval(timerRef.current)
     streamRef.current?.getTracks().forEach((track) => track.stop())
-    if (audioUrl) URL.revokeObjectURL(audioUrl)
-  }, [audioUrl])
+  }, [])
 
-  return { status, seconds, audioUrl, error, toggle, stop, processFile }
+  return { status, seconds, audioUrl, error, toggle, stop, processFile, reset, restore, setAudioUrl, setStatus }
 }

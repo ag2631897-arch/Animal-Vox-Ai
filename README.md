@@ -6,11 +6,12 @@
 <br/>
 
 <p>
-  <img src="https://img.shields.io/badge/Status-In%20Development-27AE60?style=for-the-badge&logoColor=white"/>
+  <img src="https://img.shields.io/badge/Status-Active%20Development-27AE60?style=for-the-badge&logoColor=white"/>
   <img src="https://img.shields.io/badge/License-MIT-0A6B6B?style=for-the-badge"/>
-  <img src="https://img.shields.io/badge/Cost-100%25%20Free-1A6B3A?style=for-the-badge"/>
   <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white"/>
   <img src="https://img.shields.io/badge/PyTorch-2.x-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white"/>
+  <img src="https://img.shields.io/badge/React-18%20%2B%20Vite-61DAFB?style=for-the-badge&logo=react&logoColor=black"/>
+  <img src="https://img.shields.io/badge/FastAPI-Backend-009688?style=for-the-badge&logo=fastapi&logoColor=white"/>
 </p>
 
 <h3>
@@ -18,14 +19,8 @@
 </h3>
 
 <p align="center">
-  AnimalVox AI is a behavioral bioacoustics platform that translates animal vocalizations — bird calls, dog barks, dolphin whistles, whale songs — into meaningful human language, grounded in real ethological science.
+  AnimalVox AI is a behavioral bioacoustics platform that analyzes and translates animal vocalizations — birds, dogs, cats, dolphins, whales, and frogs — into human-readable behavioral insights grounded in ethological science.
 </p>
-
-<br/>
-
-[**📙 Implementation Plan**](./docs/AnimalVox_Implementation_Plan.docx) • [**📕 Project Explainer**](./docs/AnimalVox_Project_Explainer.docx)
-
-<br/>
 
 </div>
 
@@ -33,70 +28,63 @@
 
 ## 🌿 What Is AnimalVox AI?
 
-AnimalVox AI is **not** a gimmick translator. Animals don't have words — but they absolutely have *meaning* in their sounds.
+AnimalVox AI is **not** a gimmick translator. Animals don't have human words, but their vocalizations carry measurable **behavioral and emotional intent**.
 
-When a robin produces a rapid series of thin, high-pitched calls, ornithologists know from 80 years of field research that this is an **aerial predator alarm**. AnimalVox AI learns to recognize this pattern and outputs:
+When a bird produces a rapid series of thin, high-pitched calls, ornithological research identifies this as an **aerial predator alarm**. AnimalVox AI combines pretrained audio tagging, acoustic-prosodic deep learning, embedding-based anti-spoofing, and ethological knowledge retrieval to translate vocalizations into clear behavioral interpretations:
 
 > *"Freeze — there's a hawk directly overhead. Don't move a muscle."*
-
-Every translation is grounded in **peer-reviewed ethology** (the science of animal behavior). The system uses deep learning to classify vocalizations into behavioral states, then translates those states into natural human language.
 
 ---
 
 ## ✨ Key Features
 
-- 🎙️ **Record or upload** any animal audio (`.wav`, `.mp3`, `.flac`, `.ogg`)
-- 🧠 **5-layer AI pipeline** — acoustic encoding → behavioral classification → context reasoning → NLG
-- 🐦 **Multi-species support** — Birds, Dogs, Cats, Dolphins, Whales, Frogs
-- 📊 **Behavioral state detection** — 12 behavior classes with intensity + urgency scores
-- 🔗 **Sequential context** — understands call *series*, not just single calls
-- 🌐 **Web interface** — React/Vite frontend served by the FastAPI backend
-- 💸 **100% Free** — zero infrastructure cost, fully open source
+- 🎙️ **Record or Upload Audio** — Supports `.wav`, `.mp3`, `.flac`, `.ogg`, and `.webm` with live microphone capture and streaming translation responses
+- 🛡️ **Stage 0 Anti-Spoofing & Audio Gatekeeper** — Uses a pretrained **PANNs CNN14** AudioSet 527-class sound-event tagger (`models/audio_tagger.py`), an **embedding-based anti-spoofing classifier** (`models/anti_spoofing/`), and a **music detector** (`models/music_detector.py`) to reject human speech, human imitations, music, and background SFX
+- 🐾 **Automatic Species Detection & Auto-Routing** — Identifies Birds, Dogs, Cats, Dolphins, Whales, and Frogs automatically (`models/animal_detector/`)
+- 🧠 **Multi-Tier Intelligence Pipeline** — Dual-stream acoustic encoding, 12-class behavioral classification (`B00`–`B11`) with intensity/urgency scoring, sequential call-series reasoning, ChromaDB ethology retrieval, and Groq-powered NLG synthesis
+- 📊 **5 Pet Intelligence Modules**:
+  - **Module 01 — Health Monitoring** (`models/health_monitor/`): Acoustic anomaly tracking and weekly health signals
+  - **Module 02 — Breed Identification** (`models/breed_identifier/`): Acoustic + optional visual multimodal breed inference
+  - **Module 03 — Emotional & Behavioral Tracking** (`models/emotional_tracker/`): Weekly emotional trends and timelines
+  - **Module 04 — Wellbeing Signals Dashboard** (`models/wellbeing_signals/`): Aggregated pet wellbeing telemetry
+  - **Module 05 — Animal Detection & Auto-Routing** (`models/animal_detector/`): Ambient species detection
+- 🔐 **Multi-User Auth & Data Isolation** — Email/password JWT authentication, Google OAuth 2.0, and **NeonDB PostgreSQL** persistence (`database/`) with per-user pet/history isolation and client-side **IndexedDB** audio clip storage
+- ⚡ **Production Hardening & Deployment** — In-memory inference caching (`inference/cache.py`), IP/route rate limiting (`inference/security.py`), Dockerfiles + Compose, and Vercel SPA configuration
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-Raw Audio (.wav / .mp3 / .flac)
+Raw Audio (.wav / .mp3 / .flac / .ogg / .webm)
         │
         ▼
-┌─────────────────────────────────────────┐
-│         PREPROCESSING LAYER             │
-│  Resample → Normalize → Segment → Gate  │
-└──────────────┬──────────────────────────┘
-               │
-       ┌───────┴────────┐
-       ▼                ▼                ▼
-┌────────────┐  ┌─────────────┐  ┌──────────────┐
-│   BEATs    │  │  Mel-Spec   │  │  Prosodic    │
-│  Encoder   │  │  EfficientB3│  │  Extractor   │
-│ (768-dim)  │  │ (CNN feats) │  │ (10 features)│
-└─────┬──────┘  └──────┬──────┘  └──────┬───────┘
-      └─────────────────┴────────────────┘
-                        │
-                        ▼
-           ┌────────────────────────┐
-           │    FUSION + CLASSIFIER  │
-           │  Multi-label: B00-B11   │
-           │  Intensity + Urgency    │
-           └────────────┬───────────┘
-                        │
-                        ▼
-           ┌────────────────────────┐
-           │   CONTEXT REASONING    │
-           │  Sequence Transformer  │
-           │  Ethology KB (ChromaDB)│
-           └────────────┬───────────┘
-                        │
-                        ▼
-           ┌────────────────────────┐
-           │   NLG — Mistral 7B     │
-           │  Fine-tuned translator │
-           └────────────┬───────────┘
-                        │
-                        ▼
-         "Freeze — hawk above. Don't move."
+┌───────────────────────────────────────────────────────┐
+│        STAGE 0: ANTI-SPOOFING & SOUND GATEKEEPER      │
+│  PANNs CNN14 (AudioSet 527) + Embedding Anti-Spoofing │
+│  + Music Detector → Reject Human Voice / Imitation    │
+└──────────────────────────┬────────────────────────────┘
+                           │
+                           ▼
+┌───────────────────────────────────────────────────────┐
+│         STAGE 1 & 2: PREPROCESSING & FEATURES         │
+│  Resample (16 kHz) → Noise Gate → Segment             │
+│  BEATs / Dual-Stream + Mel-Spec CNN + Prosodic Feats  │
+└──────────────────────────┬────────────────────────────┘
+                           │
+                           ▼
+┌───────────────────────────────────────────────────────┐
+│       STAGE 3 & 4: CLASSIFICATION & CONTEXT           │
+│  Auto Species Routing + Multi-label Behaviors (B00-11)│
+│  Call Sequence Transformer + Ethology KB (ChromaDB)   │
+└──────────────────────────┬────────────────────────────┘
+                           │
+                           ▼
+┌───────────────────────────────────────────────────────┐
+│     STAGE 5: NLG TRANSLATION & MODULE ENRICHMENT      │
+│  Groq Streaming Translator + Health / Breed /         │
+│  Emotion / Wellbeing Signal Updates                   │
+└───────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -104,7 +92,7 @@ Raw Audio (.wav / .mp3 / .flac)
 ## 🐾 Supported Animals
 
 | Animal | Vocalizations Analyzed | Example Translation |
-|--------|----------------------|---------------------|
+|--------|------------------------|---------------------|
 | 🐦 **Birds** | Alarm calls, mating songs, territorial warnings, contact calls, distress | *"This is MY tree. I have been here three seasons and I am not leaving."* |
 | 🐕 **Dogs** | Barks, growls, whines, howls, yelps | *"Something is at the door. I don't know what it is. EVERYONE WAKE UP."* |
 | 🐱 **Cats** | Meows, purrs, hisses, chirps, chatters | *"I can see that bird and I cannot get to it and it is TORTURE."* |
@@ -120,57 +108,42 @@ The system classifies 12 universal behavioral states across species:
 
 | ID | Behavior | Description |
 |----|----------|-------------|
-| B00 | `alarm_aerial` | Aerial predator warning |
-| B01 | `alarm_ground` | Ground predator warning |
-| B02 | `territorial_warning` | Defend territory from rivals |
-| B03 | `mating_call` | Attract mate / breeding signal |
-| B04 | `contact_call` | Maintain group cohesion |
-| B05 | `distress_call` | Pain, capture, extreme fear |
-| B06 | `feeding_call` | Food found / foraging |
-| B07 | `play_vocalization` | Social play / excitement |
-| B08 | `submission_signal` | Deference / appeasement |
-| B09 | `aggression_warning` | Direct threat / imminent attack |
-| B10 | `social_bonding` | Affiliation maintenance |
-| B11 | `navigation_echolocation` | Spatial orientation / hunting |
+| `B00` | `alarm_aerial` | Aerial predator warning |
+| `B01` | `alarm_ground` | Ground predator warning |
+| `B02` | `territorial_warning` | Defend territory from rivals |
+| `B03` | `mating_call` | Attract mate / breeding signal |
+| `B04` | `contact_call` | Maintain group cohesion |
+| `B05` | `distress_call` | Pain, capture, extreme fear |
+| `B06` | `feeding_call` | Food found / foraging |
+| `B07` | `play_vocalization` | Social play / excitement |
+| `B08` | `submission_signal` | Deference / appeasement |
+| `B09` | `aggression_warning` | Direct threat / imminent attack |
+| `B10` | `social_bonding` | Affiliation maintenance |
+| `B11` | `navigation_echolocation` | Spatial orientation / hunting |
 
 ---
 
 ## 🛠️ Tech Stack
 
-### Core ML
-| Component | Technology | License |
-|-----------|-----------|---------|
-| Audio Encoder | [BEATs](https://github.com/microsoft/unilm/tree/master/beats) (Microsoft) | MIT |
-| Spectrogram CNN | EfficientNet-B3 (torchvision) | Apache 2.0 |
-| Prosodic Analysis | librosa + parselmouth | MIT / GPL |
-| Sequence Model | Custom 4-layer Transformer | MIT |
-| LLM (Translation) | Mistral 7B (QLoRA fine-tuned) | Apache 2.0 |
-| Vector DB | ChromaDB | Apache 2.0 |
+### Backend & ML
+| Component | Technology |
+|-----------|-----------|
+| API Server | FastAPI + Uvicorn |
+| Deep Learning | PyTorch + torchaudio + torchvision + timm |
+| Audio Tagging | PANNs CNN14 (AudioSet 527 classes, 16 kHz) |
+| Acoustic & Prosodic Analysis | librosa, soundfile, parselmouth, audiomentations |
+| Sequence & Classification | Custom Dual-Stream Classifier, Spectrogram CNN, Call Sequence Transformer |
+| Vector Database | ChromaDB (`knowledge_base/`) |
+| LLM Translation | Groq API (`groq`) with structured ethology prompt templates + offline fallbacks |
+| Persistence & Auth | NeonDB PostgreSQL (`psycopg2`), JWT, bcrypt, Google OAuth 2.0 |
 
-### Training & Infra
-| Service | Use | Cost |
-|---------|-----|------|
-| Google Colab | GPU training (T4 / A100) | Free |
-| Kaggle Notebooks | Parallel GPU training (P100) | Free |
-| HuggingFace Hub | Model hosting + Spaces | Free |
-| Groq API | Production LLM inference | Free tier |
-| Weights & Biases | Experiment tracking | Free tier |
-| GitHub Actions | CI/CD auto-deploy | Free |
-
----
-
-## 📦 Datasets
-
-| Dataset | Animals | Size | Source |
-|---------|---------|------|--------|
-| xeno-canto | Birds | 700k+ recordings | [xeno-canto.org](https://xeno-canto.org) |
-| BirdCLEF 2024 | Birds | 180k clips | [Kaggle](https://kaggle.com/competitions/birdclef-2024) |
-| Macaulay Library | Birds | 1M+ recordings | [Cornell Lab](https://www.macaulaylibrary.org) |
-| DCASE 2020 Task 5 | Dogs | ~10k clips | [dcase.community](https://dcase.community) |
-| AudioSet (filtered) | Dogs / Cats | ~15k clips | [Google Research](https://research.google.com/audioset/) |
-| DCLDE 2022 | Dolphins / Whales | 50k+ recordings | [NOAA / Zenodo](https://doi.org/10.5281/zenodo.7738698) |
-| Watkins Sound DB | Marine Mammals | 1,600+ sounds | [WHOI](https://cis.whoi.edu/science/B/whalesounds/) |
-| Earth Species Project | Multi-species | Growing | [earthspecies.org](https://earthspecies.org) |
+### Frontend & Deployment
+| Component | Technology |
+|-----------|-----------|
+| Web UI | React 18, Vite 5, Tailwind CSS, Framer Motion, Zustand, React Router |
+| Client Audio Persistence | IndexedDB (`frontend/src/lib/audioStorage.js`) |
+| Containers | Docker (`Dockerfile.backend`, `Dockerfile.frontend`) + Docker Compose |
+| Frontend Hosting | Vercel (`vercel.json`, `frontend/vercel.json`) |
 
 ---
 
@@ -178,276 +151,208 @@ The system classifies 12 universal behavioral states across species:
 
 ### Prerequisites
 
+- **Python** 3.10+
+- **Node.js** 18+ (with `npm` or `pnpm`)
+- Optional: CUDA-capable GPU for faster model inference/training
+
+### 1. Clone & Install Backend Dependencies
+
 ```bash
-Python 3.10+
-CUDA-capable GPU (or use Google Colab / Kaggle)
-```
+git clone https://github.com/ag2631897-arch/Animal-Vox-Ai.git
+cd Animal-Vox-Ai
 
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/YOUR_USERNAME/animalvox-ai.git
-cd animalvox-ai
-
-# Create virtual environment
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+# Linux / macOS:
+source venv/bin/activate
+# Windows:
+venv\Scripts\activate
 
-# Install dependencies
 pip install -r requirements.txt
 ```
 
-### Environment Setup
+### 2. Configure Environment Variables
+
+Copy `.env.example` to `.env` and fill in your values:
 
 ```bash
-# Copy the example env file
 cp .env.example .env
-
-# Fill in your API keys (see docs/AnimalVox_API_Keys_Guide.docx)
-nano .env
 ```
 
-Required keys:
+Key environment variables in `.env.example`:
+
 ```env
-XENO_CANTO_API_KEY=xc_your_key_here
-KAGGLE_USERNAME=your_username
+# Application
+NODE_ENV=production
+PORT=3000
+API_BACKEND=http://127.0.0.1:8000
+
+# NeonDB PostgreSQL & Session Security
+DATABASE_URL=postgresql://user:password@ep-small-cell-pooler.aws.neon.tech/neondb?sslmode=require
+JWT_SECRET=generate_a_long_random_secret_string_for_production
+COOKIE_SECURE=true
+
+# Google OAuth 2.0 (optional)
+GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+
+# CORS & External Services
+CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+GROQ_API_KEY=your_groq_api_key_here
+
+# Optional Model / Dataset / Tracking Tokens
+HF_TOKEN=your_huggingface_token_here
+KAGGLE_USERNAME=your_kaggle_username
 KAGGLE_KEY=your_kaggle_api_key
-FREESOUND_API_KEY=your_freesound_client_id
-HUGGINGFACE_TOKEN=hf_your_token_here
-GROQ_API_KEY=gsk_your_key_here
-WANDB_API_KEY=your_wandb_key_here
+WANDB_API_KEY=your_wandb_api_key_here
+WANDB_PROJECT=animalvox-ai
 ```
 
-### Download Datasets
+### 3. Build & Run Locally
+
+**Option A — Single FastAPI server serving API + built React frontend:**
 
 ```bash
-# Download bird dataset (xeno-canto + BirdCLEF)
-python data/download_scripts/download_xeno_canto.py
-
-# Download dog/cat clips
-python data/download_scripts/download_audioclips.py
-
-# Download marine mammal data
-python data/download_scripts/download_marine.py
-```
-
-### Preprocess
-
-```bash
-# Standardize all audio + generate spectrograms
-python data/preprocessing/standardize_audio.py
-python data/preprocessing/generate_spectrograms.py
-```
-
-### Train
-
-```bash
-# Open training notebooks in Colab or Kaggle:
-# training/train_birds.ipynb      ← Start here
-# training/train_dogs.ipynb
-# training/train_marine.ipynb
-# training/finetune_mistral.ipynb
-```
-
-### Run the App Locally
-
-AnimalVox uses the React frontend in `frontend/` as its primary interface. Build it once,
-then FastAPI serves both the API and the frontend from one process.
-
-```bash
-# Terminal 1: build the React frontend
+# 1. Build the React frontend
 cd frontend
-pnpm install
-pnpm run build
+npm install
+npm run build
 
-# Terminal 2: start the API and primary web interface
+# 2. Start the FastAPI backend
 cd ..
 python -m uvicorn inference.api:app --host 0.0.0.0 --port 8000
-# Open: http://localhost:8000
+# Open http://localhost:8000
 ```
 
-For frontend-only development, keep the API running on port 8000 and use `pnpm run dev`
-inside `frontend/`; Vite proxies `/api` requests to the backend.
+**Option B — Separate Vite dev server (hot reload) + FastAPI API:**
+
+```bash
+# Terminal 1: FastAPI backend on port 8000
+python -m uvicorn inference.api:app --host 0.0.0.0 --port 8000
+
+# Terminal 2: Frontend server on port 3000
+cd frontend
+npm run dev:vite
+# Open http://localhost:3000
+```
+
+**Option C — Docker Compose:**
+
+```bash
+docker compose up --build
+```
+
+- Frontend container runs on `http://localhost:3000`
+- Backend API container runs on `http://localhost:8000`
+
+---
+
+## 🔌 Core API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/health` | Health check and model/pipeline status |
+| `POST` | `/api/v1/translate` | Full audio analysis & behavioral translation |
+| `POST` | `/api/v1/translate/stream` | Streaming translation endpoint |
+| `POST` | `/api/v1/reset` | Reset session sequence state |
+| `GET` | `/api/v1/species` | List supported species groups |
+| `GET` | `/api/v1/health/weekly/{pet_id}` | Weekly pet health metrics |
+| `GET` | `/api/v1/emotion/weekly/{pet_id}` | Weekly emotional timeline |
+| `GET` | `/api/v1/wellbeing/{pet_id}` | Pet wellbeing dashboard signals |
+| `GET` / `POST` | `/api/v1/user/state`, `/api/v1/user/sync` | Per-user state retrieval and sync |
+| `POST` / `DELETE` | `/api/v1/pets`, `/api/v1/pets/{pet_id}` | Create or remove user pet profiles |
+| `POST` | `/api/v1/translations` | Persist translation history entries |
+| `GET` / `POST` | `/api/v1/auth/*` | Signup, login, Google OAuth, logout, and session check |
+| `GET` | `/api/v1/cache/stats` | Inference cache metrics |
 
 ---
 
 ## 📁 Repository Structure
 
 ```
-animalvox-ai/
-├── data/
-│   ├── download_scripts/          # Dataset downloaders
-│   │   ├── download_xeno_canto.py
-│   │   ├── download_birdclef.py
-│   │   ├── download_audioclips.py
-│   │   └── download_marine.py
-│   ├── preprocessing/             # Audio standardization + augmentation
-│   │   ├── standardize_audio.py
-│   │   ├── generate_spectrograms.py
-│   │   └── augmentation.py
-│   └── label_maps/                # Behavior label mappings per species
-│       ├── birds_behavior_map.json
-│       ├── dogs_behavior_map.json
-│       └── marine_behavior_map.json
-│
-├── models/
-│   ├── acoustic_encoder/          # BEATs fine-tuning per species group
-│   ├── behavioral_classifier/     # Multi-label classifier + prosodic extractor
-│   ├── sequence_model/            # Call-series Transformer
-│   └── nlg_layer/                 # Mistral 7B fine-tuned translator
-│
-├── knowledge_base/
-│   ├── ethology_db.py             # ChromaDB interface
-│   ├── populate_db.py             # Seed the vector database
-│   └── seed_data/                 # JSON ethology entries (500+ species entries)
-│
-├── training/
-│   ├── train_birds.ipynb          # Colab notebook — bird encoder
-│   ├── train_dogs.ipynb           # Colab notebook — dog/cat encoder
-│   ├── train_marine.ipynb         # Colab notebook — marine encoder
-│   ├── finetune_mistral.ipynb     # QLoRA fine-tuning notebook
-│   └── configs/                   # YAML hyperparameter configs
-│
-├── inference/
-│   ├── pipeline.py                # Full end-to-end inference
-│   └── api.py                     # FastAPI REST endpoint
-│
-├── app/
-│   ├── frontend/                    # Primary React/Vite web interface
-│   │   ├── src/                     # Screens, API client, components and state
-│   │   └── package.json             # Frontend scripts and dependencies
-│
-├── evaluation/
-│   ├── benchmark.py               # Model evaluation scripts
-│   └── human_eval_tool.py         # Human evaluation interface
-│
-├── docs/                          # Project documentation
-│   ├── AnimalVox_PRD.docx
-│   ├── AnimalVox_TRD.docx
-│   ├── AnimalVox_Implementation_Plan.docx
-│   ├── AnimalVox_Project_Explainer.docx
-│   └── AnimalVox_API_Keys_Guide.docx
-│
+Animal-Vox-Ai/
+├── config.py                      # Central audio, model, anti-spoofing, and inference config
+├── requirements.txt               # Python dependencies
+├── Dockerfile.backend             # Backend FastAPI Docker image
+├── Dockerfile.frontend            # Frontend Node/Vite Docker image
+├── docker-compose.yml             # Multi-service container orchestration
+├── package.json                   # Root workspace helper script for Vercel
+├── vercel.json                    # Root Vercel monorepo build & SPA routing config
 ├── .env.example                   # Environment variable template
-├── .gitignore
-├── requirements.txt
-└── README.md
+│
+├── database/                      # NeonDB PostgreSQL layer
+│   ├── connection.py              # Connection pool & schema initialization
+│   ├── auth.py                    # JWT, bcrypt, and Google OAuth 2.0
+│   └── user_data.py               # Per-user ownership & telemetry isolation
+│
+├── inference/                     # Production API & inference orchestration
+│   ├── api.py                     # FastAPI REST & streaming server
+│   ├── pipeline.py                # End-to-end 5-stage + 5-module inference pipeline
+│   ├── cache.py                   # Inference response caching
+│   └── security.py                # Rate limiting & request protection
+│
+├── models/                        # Bioacoustic ML models & gatekeepers
+│   ├── audio_tagger.py            # Pretrained PANNs CNN14 AudioSet 527-class tagger
+│   ├── music_detector.py          # Music/SFX gatekeeper
+│   ├── dual_stream_classifier.py  # Dual-stream acoustic classifier
+│   ├── weight_manager.py          # Model weight loading & management
+│   ├── acoustic_encoder/          # Acoustic feature encoder
+│   ├── animal_detector/           # Module 05: Species detection & auto-routing
+│   ├── anti_spoofing/             # Stage 0: Embedding-based human/imitation rejection
+│   ├── behavioral_classifier/     # Multi-label behavior & prosodic classifier
+│   ├── breed_identifier/          # Module 02: Acoustic + visual breed identifier
+│   ├── emotional_tracker/         # Module 03: Emotional tracking
+│   ├── health_monitor/            # Module 01: Health anomaly monitor
+│   ├── wellbeing_signals/         # Module 04: Wellbeing dashboard aggregator
+│   ├── sequence_model/            # Call-series Transformer
+│   └── nlg_layer/                 # Ethology prompt templates & Groq translator
+│
+├── knowledge_base/                # Ethology knowledge base
+│   ├── ethology_db.py             # ChromaDB interface
+│   ├── populate_db.py             # Seed script
+│   └── seed_data/                 # Species ethology JSON entries
+│
+├── data/                          # Datasets, downloaders, and preprocessing
+│   ├── download_scripts/          # Dataset & weight downloaders
+│   ├── preprocessing/             # Audio standardization, spectrograms, augmentation
+│   ├── label_maps/                # Behavior label mappings
+│   └── sample_audio/              # Sample audio clips
+│
+├── training/                      # Training & dataset streaming pipelines
+│   ├── bootstrap_anti_spoofing.py # Anti-spoofing training data bootstrap
+│   ├── train_anti_spoofing*.py    # Anti-spoofing & embedding classifier training
+│   ├── train_from_shards.py       # Sharded dataset training
+│   ├── train_max_accuracy.py      # High-accuracy training pipeline
+│   └── stream_*_pipeline.py       # AudioSet & universal animal stream pipelines
+│
+├── frontend/                      # React 18 + Vite 5 web application
+│   ├── src/                       # Pages, screens, UI components, hooks, store, IndexedDB
+│   ├── public/                    # Static assets, SEO sitemap, robots.txt
+│   ├── server.js                  # Production Node proxy/SSR server
+│   ├── vercel.json                # Vercel frontend output & rewrite config
+│   └── package.json               # Frontend scripts and dependencies
+│
+├── evaluation/                    # Evaluation scripts
+└── test_*.py                      # End-to-end & regression test suites
 ```
 
 ---
 
-## 🗺️ Roadmap
+## ⚠️ Limitations & Disclaimers
 
-```
-Phase 1  ████████████░░░░░░░░  Data Pipeline          2 weeks
-Phase 2  ░░░░░░░░░░░░░░░░░░░░  Acoustic Encoder       2 weeks
-Phase 3  ░░░░░░░░░░░░░░░░░░░░  Behavioral Classifier  1 week
-Phase 4  ░░░░░░░░░░░░░░░░░░░░  Ethology KB            2 weeks
-Phase 5  ░░░░░░░░░░░░░░░░░░░░  LLM Translator         2 weeks
-Phase 6  ░░░░░░░░░░░░░░░░░░░░  Sequence Context       1 week
-Phase 7  ░░░░░░░░░░░░░░░░░░░░  Web + Mobile App       1 week
-Phase 8  ░░░░░░░░░░░░░░░░░░░░  Feedback Loop          Ongoing
-```
-
-| Phase | Status |
-|-------|--------|
-| Phase 1 — Data Pipeline | 🔄 In Progress |
-| Phase 2 — Acoustic Encoder | ⏳ Planned |
-| Phase 3 — Behavioral Classifier | ⏳ Planned |
-| Phase 4 — Ethology Knowledge Base | ⏳ Planned |
-| Phase 5 — LLM Translation Layer | ⏳ Planned |
-| Phase 6 — Sequential Context Model | ⏳ Planned |
-| Phase 7 — Web & Mobile App | ⏳ Planned |
-| Phase 8 — Feedback & Retraining | ⏳ Planned |
-
----
-
-## 🎯 Target Metrics
-
-| Metric | Target |
-|--------|--------|
-| Bird call classification (top-1 accuracy) | > 85% |
-| Dog behavior F1 (macro-averaged) | > 80% |
-| Marine mammal call detection | > 78% |
-| Web inference latency | < 3 seconds |
-| Translation naturalness (human eval) | > 4.2 / 5.0 |
-
----
-
-## 🔬 Related Research
-
-This project builds on the work of:
-
-- **[Earth Species Project](https://earthspecies.org)** — Applying AI to decode animal communication across all species
-- **[Cornell Lab of Ornithology](https://www.birds.cornell.edu)** — Macaulay Library + BirdNET species identification
-- **[Project CETI](https://www.projectceti.org)** — Decoding sperm whale communication using ML
-- **[NOAA Fisheries](https://www.fisheries.noaa.gov)** — Marine mammal acoustic monitoring
-- **[BirdCLEF](https://www.kaggle.com/competitions/birdclef-2024)** — Bird vocalization recognition challenge
-
----
-
-## ⚠️ Honest Limitations
-
-AnimalVox AI is scientifically grounded, but be aware:
-
-- **Animals don't have language.** Translations are behavioral interpretations, not word-for-word translations.
-- **Individual variation exists.** The model works at the population level — two individual dogs may sound different.
-- **Recording quality matters.** Distant or noisy recordings reduce accuracy significantly.
-- **Species coverage is limited.** Only 6 animal groups at launch — expanding via community contributions.
-- **Not a veterinary tool.** Cannot diagnose health conditions from vocalizations.
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome — especially for new species models and ethology knowledge base entries.
-
-```bash
-# Fork the repo, create a branch
-git checkout -b feature/add-wolf-species
-
-# Make your changes, commit
-git commit -m "feat: add wolf vocalization model and ethology entries"
-
-# Push and open a Pull Request
-git push origin feature/add-wolf-species
-```
-
-Areas where help is most needed:
-- 🐺 New species ethology entries (JSON format in `knowledge_base/seed_data/`)
-- 🎵 Dataset curation and labeling
-- 📱 Mobile app (Capacitor/React Native)
-- 🌍 Translations of the app UI into other languages
+- **Animals don't have human language.** Translations represent behavioral and emotional interpretations grounded in ethology, not literal speech.
+- **Not a veterinary diagnostic tool.** Health and wellbeing scores are informational acoustic signals and do not replace professional veterinary care.
+- **Recording environment matters.** Heavy wind, distant microphones, or overlapping noise lower classification confidence.
 
 ---
 
 ## 📄 License
 
-This project is licensed under the **MIT License** — see [LICENSE](./LICENSE) for details.
-
-All datasets used are publicly available and used in accordance with their respective licenses. Model weights (BEATs, Mistral 7B) are used under their original Apache 2.0 / MIT licenses.
-
----
-
-## 📚 Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Implementation Plan](./docs/AnimalVox_Implementation_Plan.docx) | 8-phase build roadmap with week-by-week tasks |
-| [Project Explainer](./docs/AnimalVox_Project_Explainer.docx) | Plain-language explanation of the whole system |
-| [API Keys Guide](./docs/AnimalVox_API_Keys_Guide.docx) | Every external service, how to register, where to get keys |
+This project is licensed under the **MIT License**. Datasets and pretrained backbones (such as PANNs CNN14 and BEATs) are subject to their respective original licenses.
 
 ---
 
 <div align="center">
 
-<br/>
-
 **Built with 🌿 for the animals that share our world**
-
-<br/>
-
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:27AE60,100:0A6B6B&height=100&section=footer" width="100%"/>
 
 </div>

@@ -4,7 +4,7 @@ import { ArrowRight, AudioLines, Eye, EyeOff, Lock, Mail, PawPrint, User, CheckC
 import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/useAppStore'
 
-const API_BASE = 'http://127.0.0.1:8000/api/v1/auth'
+const API_BASE = '/api/v1/auth'
 
 export default function LoginPage() {
   const [mode, setMode] = useState('login')

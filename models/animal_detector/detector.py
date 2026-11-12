@@ -65,12 +65,19 @@ class VADFilter:
         """
         Human voice exclusion filter (mixed audio handler).
         When audio contains BOTH a real animal vocalization AND human talking:
-        - Detects human speech frames vs real animal vocalization frames.
-        - Mutes/suppresses the human talking and preserves the clean animal vocalization.
+        - Detects human speech segments vs real animal vocalization segments via PANNs CNN14.
+        - Suppresses the human talking segments and preserves the clean animal vocalization.
         - Returns (cleaned_audio, True) where True signals human_speech_removed.
         If only animal or only human is present, returns (audio, False).
         """
         sr = self.sr
+        try:
+            from models.audio_tagger import get_tagger
+            tagger = get_tagger()
+            if tagger.available:
+                return tagger.isolate_animal_from_speech(audio, sr=sr)
+        except Exception as e:
+            logger.debug(f"PANNs speech isolation fallback: {e}")
         win_len = int(sr * 0.15)  # 150ms window
         hop_len = int(sr * 0.05)  # 50ms hop
         
@@ -105,40 +112,40 @@ class VADFilter:
             zcr = float(np.mean(librosa.feature.zero_crossing_rate(seg)))
 
             formants = fa.extract_formants(seg, sr=sr)
+            f1 = float(formants[0]) if len(formants) > 0 else 0.0
             f2 = float(formants[1]) if len(formants) > 1 else 0.0
             vtl, disp = fa.estimate_vocal_tract_length(formants)
-            f1 = float(formants[0]) if len(formants) > 0 else 0.0
-            has_human_f = (200 <= f1 <= 950) and (750 <= f2 <= 2750)
-            has_human_geom = (11.5 <= vtl <= 22.0) or (750 <= disp <= 1650)
 
-            # Human voice frame:
-            # 1. Normal speech: modal F0 70-280 Hz with speech centroid and harmonicity
-            # 2. Human falsetto / imitation: F0 200-750 Hz with human vocal tract length / formants and high tonality
-            is_human_frame = (
-                ((70 <= med_f0 <= 280) and (350 <= sc <= 2600) and (hnr >= 8.0)) or
-                ((200 <= med_f0 <= 750) and (hnr >= 10.0 or sf < 0.03) and (has_human_geom or has_human_f))
-            )
+            has_human_geom = (11.5 <= vtl <= 22.0) or (750 <= disp <= 1650)
+            is_human_front_vowel = (has_human_geom and 70 <= med_f0 <= 270 and 200 <= f1 <= 450 and f2 >= 2100)
 
             # Animal call:
-            # - Canine bark: explosive onset with high canine pitch (med_f0 >= 280) or chaotic turbulent airflow
+            # - Canine bark: explosive onset with high canine pitch or canine F2 burst without human tract
             is_canine_bark = (
-                rms >= 0.025 and not is_human_frame and (
-                    (med_f0 >= 280 and sc >= 700 and not has_human_geom) or
-                    (med_f0 < 70 and sc >= 750 and zcr >= 0.04) or
-                    (f2 >= 1620 and hnr < 10.0 and zcr >= 0.04)
+                rms >= 0.025 and (
+                    (1650 <= f2 <= 2100 and (sc >= 600 or zcr >= 0.035)) or
+                    (f2 > 2100 and not is_human_front_vowel and (sc >= 750 or zcr >= 0.04)) or
+                    (med_f0 >= 450 and f2 >= 1800)
                 )
             )
-            is_high_pitch_animal = (med_f0 >= 300 and rms >= 0.020 and not is_human_frame and not has_human_geom)
-            is_avian = (sc >= 2200 and rms >= 0.020 and (med_f0 == 0 or med_f0 >= 800) and not is_human_frame)
-            is_infrasonic = (20 <= med_f0 <= 70 and rms >= 0.015 and not is_human_frame)
-            is_frog = (140 <= med_f0 <= 650 and sc < 1800 and f2 >= 1650 and not is_human_frame and not has_human_geom)
+            is_high_pitch_animal = (med_f0 >= 280 and rms >= 0.025 and (vtl < 11.0 or disp >= 1650) and not has_human_geom)
+            is_avian = (sc >= 2200 and rms >= 0.020 and (med_f0 == 0 or med_f0 >= 800) and not has_human_geom)
+            is_infrasonic = (20 <= med_f0 <= 70 and rms >= 0.020 and not has_human_geom)
+            is_frog = (140 <= med_f0 <= 650 and sc < 1800 and (3.0 <= hnr <= 16.0) and not has_human_geom)
 
             is_animal_call = bool(is_canine_bark or is_high_pitch_animal or is_avian or is_infrasonic or is_frog)
 
-            frame_human[i] = is_human_frame and not is_animal_call
-            frame_animal[i] = is_animal_call
+            is_human_speech = (
+                not is_animal_call and (
+                    (70 <= med_f0 <= 320 and 300 <= sc <= 2800 and hnr >= 7.0) or
+                    (has_human_geom and 70 <= med_f0 <= 650 and (hnr >= 8.0 or sf < 0.03))
+                )
+            )
 
-        # Genuine mixed audio must have animal vocalization frames and genuine human speech frames
+            frame_human[i] = is_human_speech and not is_animal_call
+            frame_animal[i] = is_animal_call and not is_human_speech
+
+
         has_animal = bool(np.sum(frame_animal) >= 2)
         has_human = bool(np.sum(frame_human) >= 2)
 
@@ -422,6 +429,14 @@ class AnimalDetectionPipeline:
         if len(audio) == 0:
             return np.ones(6) / 6.0
 
+        # Strip silent zero-padding before window selection
+        try:
+            trimmed_audio, _ = librosa.effects.trim(audio, top_db=30)
+            if len(trimmed_audio) >= int(0.2 * sr):
+                audio = trimmed_audio
+        except Exception:
+            pass
+
         # Select active segment (peak RMS 1-second window) to avoid analyzing silent pre-roll
         if len(audio) > sr:
             window_len = sr
@@ -505,32 +520,27 @@ class AnimalDetectionPipeline:
         scores = np.zeros(6)  # ['birds', 'dogs', 'cats', 'dolphins', 'whales', 'frogs']
         dur_s = len(analysis_audio) / sr
 
-        # 1. Cats: Characteristic FM sweep meow (pitch modulation >= 20 Hz, feline pitch 320-1100 Hz, tonal HNR >= 8 dB), or purr (20-70 Hz)
+        # 1. Cats: Characteristic FM sweep meow (pitch modulation > 30 Hz, feline pitch 280-1100 Hz, tonal HNR >= 8.0)
         is_cat_purr = (
             20 <= med_f0 <= 70 and dur_s >= 0.8 and rms > 0.020 and hnr_db >= 6.0 and
             mean_cent >= 350.0 and (filename_hint == 'cats' or (p75_f0 - p25_f0 >= 10.0))
         )
         is_cat_meow = (
-            (320 <= med_f0 <= 1100) and
-            (hnr_db >= 16.0 or (hnr_db >= 7.0 and (p75_f0 - p25_f0 >= 25.0))) and
-            (p75_f0 - p25_f0 >= 20.0 or high_f0_ratio >= 0.25) and
-            mean_cent <= 2600
+            (280 <= med_f0 <= 1100) and (hnr_db >= 7.0) and
+            ((p75_f0 - p25_f0 > 30.0) or (high_f0_ratio >= 0.25 and dur_s >= 0.5))
         )
         if is_cat_meow or is_cat_purr:
             scores[2] = 4.8
-        elif dur_s >= 0.5 and 350 <= med_f0 <= 1000 and (p75_f0 - p25_f0 > 30.0) and hnr_db >= 6.5:
-            scores[2] = 4.0
+        elif dur_s >= 0.6 and 350 <= med_f0 <= 1000 and (p75_f0 - p25_f0 > 40.0) and hnr_db >= 15.0:
+            scores[2] = 4.2
 
-        # 2. Dogs: Barks (bursty duration < 0.65s or rough phonation / low F0), whines (350-1200 Hz), howls (200-550 Hz)
+        # 2. Dogs: Barks (bursty duration < 1.4s, centroid 600-2400 Hz, rough phonation HNR < 24 or dog fundamental), whines, howls
         is_dog_bark = (
-            not is_cat_meow and
-            (
-                (dur_s < 0.65 and 600 <= mean_cent <= 2400 and (med_f0 == 0 or 75 <= med_f0 <= 1250) and hnr_db < 28.0) or
-                (75 <= med_f0 <= 320 and mean_cent <= 2400 and dur_s < 1.4) or
-                (med_f0 > 350 and hnr_db < 22.0 and dur_s < 0.8)
-            )
+            dur_s < 1.4 and 600 <= mean_cent <= 2400 and
+            ((hnr_db < 24.0 and (zcr >= 0.035 or mean_cent >= 750)) or (100 <= med_f0 <= 300)) and
+            not is_cat_meow
         )
-        is_dog_whine = (not is_cat_meow and 350 <= med_f0 <= 1200 and 650 <= mean_cent <= 2400 and rms >= 0.02 and (p75_f0 - p25_f0 < 25.0))
+        is_dog_whine = (350 <= med_f0 <= 1200 and 650 <= mean_cent <= 2400 and rms >= 0.02 and not is_cat_meow)
         is_dog_howl = (dur_s >= 1.2 and 180 <= med_f0 <= 500 and hnr_db >= 10.0 and mean_cent <= 2200 and not is_cat_meow)
 
         if is_dog_bark:
@@ -539,17 +549,18 @@ class AnimalDetectionPipeline:
             scores[1] = 4.5
         elif is_dog_howl:
             scores[1] = 4.5
-        elif not is_cat_meow and 80 <= med_f0 <= 320 and mean_cent <= 2400:
+        elif 80 <= med_f0 <= 550 and mean_cent <= 2400 and not is_cat_meow:
             scores[1] = 4.0
 
+
         # 3. Birds: True avian vocalizations have high syrinx pitch (> 850 Hz), high centroid (> 2100 Hz), and high tonality
-        # Must NOT be triggered by dog barks or cat meows
+        # Must NOT be triggered by dog barks
         is_bird_song_or_call = (
-            mean_cent > 2100 and (est_f0 > 850 or mean_cent > 2700) and not is_dog_bark and not is_cat_meow
+            mean_cent > 2100 and (est_f0 > 850 or mean_cent > 2700) and not is_dog_bark
         )
         if is_bird_song_or_call:
             scores[0] = 4.8
-        elif est_f0 > 850 and mean_cent > 2200 and hnr_db >= 6.0 and not is_dog_bark and not is_cat_meow:
+        elif est_f0 > 850 and mean_cent > 2200 and hnr_db >= 6.0 and not is_dog_bark:
             scores[0] = 3.9
 
         # 4. Dolphins: High frequency ultrasonic click trains (> 3500 Hz) or very high whistles (> 2500 Hz)
@@ -616,11 +627,15 @@ class AnimalDetectionPipeline:
         supported_animal_keywords = [
             'dog', 'dogs', 'puppy', 'pup', 'puppies', 'canine', 'bark', 'barking', 'hound',
             'labrador', 'husky', 'chihuahua', 'shepherd', 'retriever', 'bulldog', 'terrier', 'poodle',
+            'beagle', 'growl', 'woof', 'yip', 'howl',
             'cat', 'cats', 'kitten', 'kittens', 'feline', 'meow', 'meowing', 'purr', 'purring',
+            'maw', 'caterwaul', 'hiss',
             'bird', 'birds', 'birdsong', 'songbird', 'songbirds', 'canary', 'parrot', 'chirp',
             'chirping', 'tweet', 'sparrow', 'robin', 'warbler', 'finch', 'avian',
+            'eagle', 'eagles', 'hawk', 'hawks', 'owl', 'owls', 'falcon', 'gull', 'seagull',
+            'pigeon', 'dove', 'crow', 'raven',
             'whale', 'whales', 'humpback', 'blue whale', 'orca', 'cetacean', 'beluga',
-            'dolphin', 'dolphins', 'whistle',
+            'dolphin', 'dolphins', 'porpoise', 'whistle',
             'frog', 'frogs', 'treefrog', 'bullfrog', 'toad', 'toads', 'croak', 'croaking'
         ]
         has_supported_kw = any(sak in fn_lower for sak in supported_animal_keywords)
@@ -642,7 +657,28 @@ class AnimalDetectionPipeline:
         # Step 1: Human voice exclusion
         filtered_audio, had_speech = self.vad.remove_human_speech(audio)
 
-        # Step 2: Animal presence detection (energy + bioacoustic signature check)
+        # Step 1.5: Pretrained PANNs CNN14 AudioSet tagger
+        panns_tag_res = None
+        try:
+            from models.audio_tagger import get_tagger
+            tagger = get_tagger(device=self.device)
+            if tagger.available:
+                panns_tag_res = tagger.tag(filtered_audio, sr=sr)
+                if not has_supported_kw:
+                    uns_animal = tagger.detect_unsupported_animal(panns_tag_res)
+                    if uns_animal:
+                        elapsed = (time.time() - start) * 1000
+                        return DetectionResult(
+                            has_animal=True, soundscape="farm_outdoor",
+                            species_detections=[], num_individuals=1,
+                            human_speech_removed=had_speech, processing_time_ms=elapsed,
+                            routing_confident=True, detector_mode="panns_unsupported_gate",
+                            unsupported_species=True, unsupported_animal=uns_animal
+                        )
+        except Exception as e:
+            logger.debug(f"PANNs tagger in AnimalDetectionPipeline failed: {e}")
+
+        # Step 2: Animal presence detection (PANNs + bioacoustic signature check)
         trimmed, _ = librosa.effects.trim(filtered_audio, top_db=30)
         dur = len(trimmed) / sr
         rms = float(np.sqrt(np.mean(trimmed ** 2))) if len(trimmed) > 0 else 0.0
@@ -675,16 +711,52 @@ class AnimalDetectionPipeline:
                 f0_track, _, _ = librosa.pyin(trimmed, fmin=60, fmax=2000, sr=sr)
                 f0_valid = f0_track[~np.isnan(f0_track)] if f0_track is not None else np.array([])
                 med_f0 = float(np.median(f0_valid)) if len(f0_valid) >= 2 else 0.0
+                iqr_f0_det = float(np.percentile(f0_valid, 75) - np.percentile(f0_valid, 25)) if len(f0_valid) >= 4 else 0.0
             except Exception:
                 med_f0 = 0.0
+                iqr_f0_det = 0.0
 
-            has_animal = (
-                (dur < 1.4 and peak_rms > 0.025 and (mean_cent > 700 or zcr > 0.035)) or # Dog bark / growl
-                (180 <= med_f0 <= 2500 and peak_rms > 0.022) or                          # Dog howl/whine, cat meow, frog
-                (med_f0 > 1100 or mean_cent > 2200) or                                   # Bird chirps
-                (med_f0 < 150 and dur > 1.5 and mean_cent > 200) or                     # Whale moans
-                (peak_rms > 0.035 and (zcr > 0.05 or mean_cent > 1000))                  # General vocal energy burst
+            sf = librosa.feature.spectral_flatness(y=trimmed)[0]
+            hnr_db = float(-10.0 * np.log10(np.mean(sf) + 1e-8))
+
+            from models.anti_spoofing.detector import FormantAnalyzer
+            fa_detect = FormantAnalyzer(sr=sr)
+            fmt_detect = fa_detect.extract_formants(trimmed[:int(sr*2)], sr=sr)
+            f2_detect = float(fmt_detect[1]) if len(fmt_detect) > 1 else 0.0
+
+            is_known_animal = any(ak in fn_lower for ak in supported_animal_keywords)
+
+            has_animal = is_known_animal or (
+                # Real canine bark / growl
+                (dur < 1.4 and peak_rms > 0.030 and ((f2_detect >= 1620 and hnr_db < 24.0) or (100 <= med_f0 <= 450) or (med_f0 >= 450 and f2_detect >= 1800))) or
+                # Real feline meow
+                (280 <= med_f0 <= 1100 and peak_rms > 0.022 and (hnr_db >= 8.0 or iqr_f0_det > 30.0)) or
+                # Real bird song
+                (mean_cent > 2200 and (med_f0 > 800 or mean_cent > 2700) and peak_rms > 0.020) or
+                # Real whale moan
+                (med_f0 < 120 and dur > 1.2 and mean_cent < 1500 and peak_rms > 0.018 and hnr_db > 8.0) or
+                # Real frog croak
+                (140 <= med_f0 <= 650 and mean_cent < 1800 and 3.0 <= hnr_db <= 18.0 and peak_rms > 0.022) or
+                # Real marine / dolphin
+                (mean_cent > 3200 and (zcr > 0.10 or med_f0 > 2200) and peak_rms > 0.020)
             )
+
+            # Override with PANNs CNN14 when available
+            if panns_tag_res is not None:
+                panns_any_animal = panns_tag_res.any_animal_prob
+                panns_speech = max(
+                    panns_tag_res.clip_groups.get("speech", 0.0),
+                    max((s.groups.get("speech", 0.0) for s in panns_tag_res.segments), default=0.0),
+                )
+                panns_hv = max(
+                    panns_tag_res.clip_groups.get("human_voice_nonspeech", 0.0),
+                    max((s.groups.get("human_voice_nonspeech", 0.0) for s in panns_tag_res.segments), default=0.0),
+                )
+                if panns_any_animal >= 0.20:
+                    has_animal = True
+                elif panns_any_animal < 0.15 and max(panns_speech, panns_hv) >= 0.25 and not is_known_animal:
+                    has_animal = False
+
 
         if not has_animal or dur < 0.15:
             elapsed = (time.time() - start) * 1000
@@ -793,6 +865,44 @@ class AnimalDetectionPipeline:
                 species_probs = self._compute_heuristic_species_probs(filtered_audio, sr, filename=filename)
         else:
             species_probs = self._compute_heuristic_species_probs(filtered_audio, sr, filename=filename)
+
+        # Blend PANNs CNN14 species probabilities (['birds', 'dogs', 'cats', 'dolphins', 'whales', 'frogs'])
+        if panns_tag_res is not None:
+            try:
+                p_birds = max(
+                    panns_tag_res.clip_groups.get("birds", 0.0),
+                    0.90 * max((s.groups.get("birds", 0.0) for s in panns_tag_res.segments), default=0.0),
+                )
+                p_dogs = max(
+                    panns_tag_res.clip_groups.get("dogs", 0.0),
+                    0.90 * max((s.groups.get("dogs", 0.0) for s in panns_tag_res.segments), default=0.0),
+                )
+                p_cats = max(
+                    panns_tag_res.clip_groups.get("cats", 0.0),
+                    0.90 * max((s.groups.get("cats", 0.0) for s in panns_tag_res.segments), default=0.0),
+                )
+                p_frogs = max(
+                    panns_tag_res.clip_groups.get("frogs", 0.0),
+                    0.90 * max((s.groups.get("frogs", 0.0) for s in panns_tag_res.segments), default=0.0),
+                )
+                p_marine = max(
+                    panns_tag_res.clip_groups.get("marine", 0.0),
+                    0.90 * max((s.groups.get("marine", 0.0) for s in panns_tag_res.segments), default=0.0),
+                )
+                cent_val = float(np.mean(librosa.feature.spectral_centroid(y=trimmed, sr=sr))) if len(trimmed) > 512 else 1200.0
+                if 'dolphin' in fn_lower or cent_val > 2400.0:
+                    p_dolphins, p_whales = p_marine, 0.1 * p_marine
+                else:
+                    p_whales, p_dolphins = p_marine, 0.1 * p_marine
+
+                panns_vec = np.array([p_birds, p_dogs, p_cats, p_dolphins, p_whales, p_frogs], dtype=np.float64)
+                if float(np.max(panns_vec)) >= 0.22:
+                    panns_dist = panns_vec / (np.sum(panns_vec) + 1e-8)
+                    heur_dist = self._compute_heuristic_species_probs(filtered_audio, sr, filename=filename)
+                    species_probs = 0.85 * panns_dist + 0.15 * heur_dist
+                    species_probs = species_probs / (np.sum(species_probs) + 1e-8)
+            except Exception as e:
+                logger.debug(f"PANNs species routing blend error: {e}")
 
         num_individuals = 1
 
