@@ -10,15 +10,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python requirements
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install lean CPU-only PyTorch first to keep image compact
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu \
+    torch>=2.0.0 torchaudio>=2.0.0 torchvision>=0.15.0
+
+# Install production backend runtime dependencies
+COPY requirements.backend.txt .
+RUN pip install --no-cache-dir -r requirements.backend.txt
 
 # Copy application source code
 COPY . .
+
+# Ensure weights directory and AudioSet label index exist
+RUN mkdir -p /app/models/weights/panns && \
+    (curl -fsSL -L --connect-timeout 10 --max-time 20 \
+      "https://storage.googleapis.com/us_audioset/youtube_corpus/v1/csv/class_labels_indices.csv" \
+      -o /app/models/weights/panns/class_labels_indices.csv || true)
 
 EXPOSE 8000
 
 ENV PYTHONUNBUFFERED=1
 
-CMD ["python", "-m", "uvicorn", "inference.api:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "python -m uvicorn inference.api:app --host 0.0.0.0 --port ${PORT:-8000}"]

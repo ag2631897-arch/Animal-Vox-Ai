@@ -11,7 +11,8 @@ torchvision>=0.15.0
 librosa>=0.10.0
 soundfile>=0.12.0
 audioread>=3.0.0
-parselmouth>=0.4.3
+praat-parselmouth>=0.4.3
+torchlibrosa>=0.1.0
 
 # Transformers & Models
 transformers>=4.36.0
@@ -38,11 +39,14 @@ pandas>=2.0.0
 matplotlib>=3.7.0
 seaborn>=0.13.0
 
-# Web API / Inference
+# Web API / Inference / Auth & Database
 groq>=0.4.0
 fastapi>=0.104.0
 uvicorn>=0.24.0
 python-multipart>=0.0.6
+psycopg2-binary>=2.9.9
+PyJWT>=2.8.0
+bcrypt>=4.1.0
 
 # Experiment Tracking
 wandb>=0.16.0

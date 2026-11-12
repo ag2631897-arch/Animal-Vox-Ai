@@ -1,0 +1,27 @@
+.git/
+.gitignore
+.kiro/
+.vscode/
+.env
+.env.*
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# Large datasets & logs not needed for backend runtime
+data/raw/
+data/processed/
+data/cache/
+data/shard_staging/
+data/anti_spoofing/
+data/diary/
+data/pet_profiles/
+*.log
+scratch/
+wandb/
+
+# Frontend dependencies & builds (backend serves API only)
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
